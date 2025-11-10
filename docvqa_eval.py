@@ -9,14 +9,37 @@ def normalize_answer(answer: str) -> str:
     """
     Performs answer normalization according to DocVQA standards:
     - Convert to lowercase
-    - Remove articles and punctuation
+    - Remove articles
     - Remove extra whitespace
     """
     answer = answer.lower()
     answer = re.sub(r'\b(a|an|the)\b', ' ', answer)
-    # Punctuation is preserved; no removal
     answer = ' '.join(answer.split())
     return answer
+
+def extract_answer(text: str) -> str:
+    """
+    Extract a concise final answer from a model response.
+    Heuristics:
+    - Match 'Final Answer: <answer>'
+    - Match 'Answer: <answer>' or 'A: <answer>'
+    - Fallback to first non-empty line
+    """
+    if not isinstance(text, str):
+        return ""
+    patterns = [
+        r"Final Answer\s*:\s*(.+)",
+        r"Answer\s*:\s*(.+)",
+        r"\bA\s*:\s*(.+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return text.strip()
 
 def compute_anls(pred: str, gt: str) -> float:
     """
@@ -26,6 +49,7 @@ def compute_anls(pred: str, gt: str) -> float:
     
     # Normalize both strings
     pred = normalize_answer(pred)
+    gt = normalize_answer(gt)
     
     # Simple dynamic programming implementation of Levenshtein distance
     m, n = len(pred), len(gt)
@@ -53,16 +77,20 @@ def compute_anls(pred: str, gt: str) -> float:
 
 def evaluate_docvqa(predictions: Union[str, Dict], 
                    ground_truth: Union[str, Dict],
-                   threshold: float = 0.5) -> Dict:
+                   threshold: float = 0.5,
+                   prediction_key: str = "answer",
+                   apply_extraction: bool = True) -> Dict:
     """
     Evaluate DocVQA predictions using ANLS metric.
     
     Args:
         predictions: Either a path to predictions JSON or a dict with format:
-                   {qid: {"answer": predicted_answer}}
+                   {qid: {prediction_key: predicted_answer or raw response}}
         ground_truth: Either a path to ground truth JSON or a dict with format:
                      {qid: {"answers": [answer1, answer2, ...]}}
         threshold: ANLS threshold (default: 0.5 as per DocVQA)
+        prediction_key: Key inside prediction dict that contains the answer or raw response.
+        apply_extraction: If True, extract a concise answer from raw responses.
     
     Returns:
         Dict containing:
@@ -87,7 +115,21 @@ def evaluate_docvqa(predictions: Union[str, Dict],
         if qid not in ground_truth:
             continue
             
-        pred_answer = pred_info["answer"]
+        # Flexible retrieval of predicted answer
+        if isinstance(pred_info, dict):
+            if prediction_key in pred_info:
+                raw_pred = pred_info[prediction_key]
+            elif "content" in pred_info:
+                raw_pred = pred_info["content"]
+            elif "prediction" in pred_info:
+                raw_pred = pred_info["prediction"]
+            else:
+                # take any first string value
+                raw_pred = next((v for v in pred_info.values() if isinstance(v, str)), "")
+        else:
+            raw_pred = str(pred_info)
+
+        pred_answer = extract_answer(raw_pred) if apply_extraction else str(raw_pred)
         gt_answers = ground_truth[qid]["answers"]
         
         # Take max similarity across all ground truth answers
@@ -136,12 +178,16 @@ if __name__ == "__main__":
     
     # Set defaults for optional parameters
     params.setdefault("threshold", 0.5)
+    params.setdefault("prediction_key", "answer")
+    params.setdefault("apply_extraction", True)
     
     # Run evaluation
     results = evaluate_docvqa(
         params["predictions"],
         params["ground_truth"],
-        params.get("threshold", 0.5)
+        params.get("threshold", 0.5),
+        params.get("prediction_key", "answer"),
+        params.get("apply_extraction", True)
     )
     
     # Print summary
