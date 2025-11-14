@@ -7,20 +7,23 @@ from typing import Any, Optional
 from openai import OpenAI
 from datasets import load_dataset
 from vlm_as_a_tool import call_vl_model
+from tqdm import tqdm
+# try:
+#     from PIL import Image  # type: ignore
+#     # simport pytesseract  # type: ignore
+#     # _OCR_AVAILABLE = True
+# except Exception:
+#     _OCR_AVAILABLE = False
 
-try:
-    from PIL import Image  # type: ignore
-    import pytesseract  # type: ignore
-    _OCR_AVAILABLE = True
-except Exception:
-    _OCR_AVAILABLE = False
+### Need to install tesseract in hpc, which I am not able to do rn. 
+_OCR_AVAILABLE = False
 
 
 def get_function_by_name(name):
     if name == "get_image_description":
         return get_image_description
-    if name == "extract_text_from_image":
-        return extract_text_from_image
+    # if name == "extract_text_from_image":
+    #     return extract_text_from_image
     if name == "calculator":
         return calculator
     raise ValueError(f"Unknown tool function requested: {name}")
@@ -37,16 +40,16 @@ def get_image_description(image_path: str, prompt: str = "Describe the image in 
     """
     return call_vl_model(prompt, image_path)
 
-def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
-    """OCR: Extract raw text from an image using Tesseract if available.
+# def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
+    # """OCR: Extract raw text from an image using Tesseract if available.
 
-    Falls back to the VLM description pathway if pytesseract/PIL are unavailable.
-    """
-    if _OCR_AVAILABLE:
-        image = Image.open(image_path)
-        return pytesseract.image_to_string(image, lang=lang).strip()
-    # Fallback: ask the VLM to extract text as best as possible
-    return call_vl_model("Extract all visible text verbatim from the image.", image_path)
+    # Falls back to the VLM description pathway if pytesseract/PIL are unavailable.
+    # """
+    # if _OCR_AVAILABLE:
+    #     image = Image.open(image_path)
+    #     return pytesseract.image_to_string(image, lang=lang).strip()
+    # # Fallback: ask the VLM to extract text as best as possible
+    # return call_vl_model("Extract all visible text verbatim from the image.", image_path)
 
 def calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression safely and return the result as string.
@@ -91,7 +94,7 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str, default="validation", help="Dataset split.")
     parser.add_argument("--controller_base_url", type=str, default="http://0.0.0.0:8000/v1")
     parser.add_argument("--controller_model", type=str, default="Qwen/Qwen3-8B")
-    parser.add_argument("--vlm_base_url", type=str, default="http://localhost:6006/v1", help="For documentation only; vlm_as_a_tool uses this.")
+    parser.add_argument("--vlm_base_url", type=str, default="http://0.0.0.0:6006/v1", help="For documentation only; vlm_as_a_tool uses this.")
     parser.add_argument("--shots", type=int, default=2, help="Number of in-context examples.")
     parser.add_argument("--num_samples", type=int, default=5, help="Number of evaluation samples.")
     parser.add_argument("--start_index", type=int, default=0, help="Start index in the split.")
@@ -123,28 +126,28 @@ if __name__ == "__main__":
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "extract_text_from_image",
-                "description": "OCR: Extract all visible text verbatim from an image.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "image_path": {
-                            "type": "string",
-                            "description": "Absolute path to an image file.",
-                        },
-                        "lang": {
-                            "type": "string",
-                            "description": "Tesseract language code (e.g., eng).",
-                            "default": "eng",
-                        },
-                    },
-                    "required": ["image_path"],
-                },
-            },
-        },
+        # {
+        #     "type": "function",
+        #     "function": {
+        #         "name": "extract_text_from_image",
+        #         "description": "OCR: Extract all visible text verbatim from an image.",
+        #         "parameters": {
+        #             "type": "object",
+        #             "properties": {
+        #                 "image_path": {
+        #                     "type": "string",
+        #                     "description": "Absolute path to an image file.",
+        #                 },
+        #                 "lang": {
+        #                     "type": "string",
+        #                     "description": "Tesseract language code (e.g., eng).",
+        #                     "default": "eng",
+        #                 },
+        #             },
+        #             "required": ["image_path"],
+        #         },
+        #     },
+        # },
         {
             "type": "function",
             "function": {
@@ -205,10 +208,10 @@ if __name__ == "__main__":
     model_name = args.controller_model
 
     # Build few-shot prompt
-    two_shot_prompt = "You are answering questions about documents and charts. Use tools when needed. Always reply with a single line: 'Final Answer: <answer>'.\n\n"
+    few_shot_prompt = "You are answering questions about documents and charts. Use tools when needed. Always reply with a single line: 'Final Answer: <answer>'.\n\n"
     for k in range(args.start_index, args.start_index + args.shots):
         s = get_fields(k)
-        two_shot_prompt += (
+        few_shot_prompt += (
             f"Image path: {s['image_path']}\n"
             f"Question Types: {s['question_types']}\n"
             f"Q: {s['question']}\n"
@@ -223,10 +226,10 @@ if __name__ == "__main__":
 
     eval_start = args.start_index + args.shots
     eval_end = eval_start + args.num_samples
-    for i in range(eval_start, eval_end):
+    for i in tqdm(range(eval_start, eval_end)):
         s = get_fields(i)
         prompt = (
-            f"{two_shot_prompt}"
+            f"{few_shot_prompt}"
             f"Now answer the following. Use tools if helpful. "
             f"Return only one line as 'Final Answer: <answer>'.\n"
             f"Image path: {s['image_path']}\n"
@@ -250,7 +253,7 @@ if __name__ == "__main__":
             max_tokens=args.max_tokens,
             extra_body={
                 "repetition_penalty": 1.05,
-                "chat_template_kwargs": {"enable_thinking": False},
+#                "chat_template_kwargs": {"enable_thinking": False},
             }
         )
 
@@ -260,58 +263,67 @@ if __name__ == "__main__":
 
         messages.append(response.choices[0].message.model_dump())
 
-        tool_start_time = time.time()
+        # Loop through in case there are a series of tool calls. 
+        stop_reason = response.choices[0].finish_reason
+        tool_latency = 0
         success_count = 0
         total_count = 0
-        if tool_calls := messages[-1].get("tool_calls", None):
-            for tool_call in tool_calls:
-                call_id: str = tool_call["id"]
-                if fn_call := tool_call.get("function"):
-                    try:
-                        total_count += 1
-                        fn_name: str = fn_call["name"]
-                        fn_args: dict = json.loads(fn_call["arguments"])
-                        fn_res: str = json.dumps(get_function_by_name(fn_name)(**fn_args))
-                        messages.append({
-                            "role": "tool",
-                            "content": fn_res,
-                            "tool_call_id": call_id,
-                        })
-                        success_count += 1
-                    except Exception as e:
-                        print(f"Tool call failed: {e}")
-        tool_end_time = time.time()
-        tool_latency = tool_end_time - tool_start_time
-        tool_metrics.append({
-            "latency": tool_latency,
-            "success": success_count,
-            "total": total_count,
-        })
+        while stop_reason == "tool_calls" or stop_reason == "tool_call":
+            tool_start_time = time.time()
+            if tool_calls := messages[-1].get("tool_calls", None):
+                for tool_call in tool_calls:
+                    call_id: str = tool_call["id"]
+                    if fn_call := tool_call.get("function"):
+                        try:
+                            total_count += 1
+                            fn_name: str = fn_call["name"]
+                            fn_args: dict = json.loads(fn_call["arguments"])
+                            fn_res: str = json.dumps(get_function_by_name(fn_name)(**fn_args))
+                            messages.append({
+                                "role": "tool",
+                                "content": fn_res,
+                                "tool_call_id": call_id,
+                            })
+                            success_count += 1
+                        except Exception as e:
+                            print(f"Tool call failed: {e}")
+            tool_end_time = time.time()
+            tool_latency += tool_end_time - tool_start_time
 
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            tools=tools,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            max_tokens=args.max_tokens,
-            extra_body={
-                "repetition_penalty": 1.05,
-            },
-        )
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                tools=tools,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                max_tokens=args.max_tokens,
+                extra_body={
+                    "repetition_penalty": 1.05,
+                },
+            )
+
+            messages.append(response.choices[0].message.model_dump())
+            stop_reason = response.choices[0].finish_reason
+
+            if hasattr(response, 'usage'):
+                prompt_tokens += response.usage.prompt_tokens
+                completion_tokens += response.usage.completion_tokens
+
         sample_end_time = time.time()
         sample_latencies.append(sample_end_time - sample_start_time)
 
+        tool_metrics.append({
+            "tool_latency": tool_latency,
+            "tool_success_count": success_count,
+            "tool_total_count": total_count,
+        })
+
         # Record token usage for final response
         if hasattr(response, 'usage'):
-            prompt_tokens += response.usage.prompt_tokens
-            completion_tokens += response.usage.completion_tokens
             usage_metrics.append({
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
             })
-
-        messages.append(response.choices[0].message.model_dump())
 
         raw_answer = messages[-1]['content']
         final_answer = extract_answer(raw_answer)
