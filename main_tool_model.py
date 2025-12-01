@@ -8,22 +8,22 @@ from openai import OpenAI
 from datasets import load_dataset
 from vlm_as_a_tool import call_vl_model
 from tqdm import tqdm
-# try:
-#     from PIL import Image  # type: ignore
-#     # simport pytesseract  # type: ignore
-#     # _OCR_AVAILABLE = True
-# except Exception:
-#     _OCR_AVAILABLE = False
-
-### Need to install tesseract in hpc, which I am not able to do rn. 
-_OCR_AVAILABLE = False
+from pathlib import Path
+try:
+    from PIL import Image  # type: ignore
+    import pytesseract  # type: ignore
+    _OCR_AVAILABLE = True
+    print("Tesseract OCR is available for use.")
+except Exception:
+    _OCR_AVAILABLE = False
+    print("Tesseract OCR is not available for use.")
 
 
 def get_function_by_name(name):
     if name == "get_image_description":
         return get_image_description
-    # if name == "extract_text_from_image":
-    #     return extract_text_from_image
+    if name == "extract_text_from_image":
+        return extract_text_from_image
     if name == "calculator":
         return calculator
     raise ValueError(f"Unknown tool function requested: {name}")
@@ -40,16 +40,16 @@ def get_image_description(image_path: str, prompt: str = "Describe the image in 
     """
     return call_vl_model(prompt, image_path)
 
-# def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
-    # """OCR: Extract raw text from an image using Tesseract if available.
+def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
+    """OCR: Extract raw text from an image using Tesseract if available.
 
-    # Falls back to the VLM description pathway if pytesseract/PIL are unavailable.
-    # """
-    # if _OCR_AVAILABLE:
-    #     image = Image.open(image_path)
-    #     return pytesseract.image_to_string(image, lang=lang).strip()
-    # # Fallback: ask the VLM to extract text as best as possible
-    # return call_vl_model("Extract all visible text verbatim from the image.", image_path)
+    Falls back to the VLM description pathway if pytesseract/PIL are unavailable.
+    """
+    if _OCR_AVAILABLE:
+        image = Image.open(image_path)
+        return pytesseract.image_to_string(image, lang=lang).strip()
+    # Fallback: ask the VLM to extract text as best as possible
+    return call_vl_model("Extract all visible text verbatim from the image.", image_path)
 
 def calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression safely and return the result as string.
@@ -96,7 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--controller_model", type=str, default="Qwen/Qwen3-8B")
     parser.add_argument("--vlm_base_url", type=str, default="http://0.0.0.0:6006/v1", help="For documentation only; vlm_as_a_tool uses this.")
     parser.add_argument("--shots", type=int, default=2, help="Number of in-context examples.")
-    parser.add_argument("--num_samples", type=int, default=5, help="Number of evaluation samples.")
+    parser.add_argument("--num_samples", type=int, default=4, help="Number of evaluation samples.")
+    parser.add_argument("--experiment_name", type=str, default="fewshot_qwen_docvqa_ocr_calc_vlm_1024", help="Experiment name used to create results folder.")
     parser.add_argument("--start_index", type=int, default=0, help="Start index in the split.")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.8)
@@ -126,28 +127,28 @@ if __name__ == "__main__":
                 },
             },
         },
-        # {
-        #     "type": "function",
-        #     "function": {
-        #         "name": "extract_text_from_image",
-        #         "description": "OCR: Extract all visible text verbatim from an image.",
-        #         "parameters": {
-        #             "type": "object",
-        #             "properties": {
-        #                 "image_path": {
-        #                     "type": "string",
-        #                     "description": "Absolute path to an image file.",
-        #                 },
-        #                 "lang": {
-        #                     "type": "string",
-        #                     "description": "Tesseract language code (e.g., eng).",
-        #                     "default": "eng",
-        #                 },
-        #             },
-        #             "required": ["image_path"],
-        #         },
-        #     },
-        # },
+        {
+            "type": "function",
+            "function": {
+                "name": "extract_text_from_image",
+                "description": "OCR: Extract all visible text verbatim from an image.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Absolute path to an image file.",
+                        },
+                        "lang": {
+                            "type": "string",
+                            "description": "Tesseract language code (e.g., eng).",
+                            "default": "eng",
+                        },
+                    },
+                    "required": ["image_path"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -340,15 +341,19 @@ if __name__ == "__main__":
         ground_truths[s['qid']] = {
             "answers": s['answers']
         }
+    
+    experiment_prefix = args.experiment_name
+    exp_dir = Path(experiment_prefix)
+    exp_dir.mkdir(parents=True, exist_ok=True)
 
-    with open("predictions.json", "w", encoding='utf-8') as f:
+    with open(exp_dir / "predictions.json", "w", encoding='utf-8') as f:
         json.dump(predictions, f, indent=2)
-    with open("ground_truth.json", "w", encoding='utf-8') as f:
+    with open(exp_dir / "ground_truth.json", "w", encoding='utf-8') as f:
         json.dump(ground_truths, f, indent=2)
 
-    with open("sample_latencies.json", "w", encoding='utf-8') as f:
+    with open(exp_dir / "sample_latencies.json", "w", encoding='utf-8') as f:
         json.dump(sample_latencies, f, indent=2)
-    with open("tool_metrics.json", "w", encoding='utf-8') as f:
+    with open(exp_dir / "tool_metrics.json", "w", encoding='utf-8') as f:
         json.dump(tool_metrics, f, indent=2)
-    with open("usage_metrics.json", "w", encoding='utf-8') as f:
+    with open(exp_dir / "usage_metrics.json", "w", encoding='utf-8') as f:
         json.dump(usage_metrics, f, indent=2)
