@@ -95,7 +95,7 @@ def kill_process(proc):
         pass
 
 # wait for port to be up with exponential backoff
-def wait_for_port(port, host="0.0.0.0", timeout=120):
+def wait_for_port(port, host="0.0.0.0", timeout=240):
     start = time.time()
     backoff = 1
     while time.time() - start < timeout:
