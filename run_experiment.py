@@ -184,7 +184,7 @@ def main():
     parser.add_argument("--split", default="validation")
     parser.add_argument("--controller_model", default="Qwen/Qwen3-8B")
     parser.add_argument("--controller_base_url", default="http://0.0.0.0:8000/v1")
-    parser.add_argument("--vlm_model", default="stabilityai/stablelm-2-12b")
+    parser.add_argument("--vlm_model", default="Qwen/Qwen3-VL-4B-Instruct")
     parser.add_argument("--vlm_base_url", default="http://0.0.0.0:6006/v1")
 
     parser.add_argument("--mode", default="baseline",
