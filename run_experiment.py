@@ -6,6 +6,9 @@ from pathlib import Path
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
+import psutil
+import socket
+import time
 
 def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","tool_calling","react"]):
     results = {}
@@ -71,12 +74,40 @@ def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","too
     plt.close()
 
 # start a server
-def start_server(description, cmd):
+def start_server(description, cmd, port):
     print(f"\n=== Starting {description} ===")
     print(" ".join(cmd))
     proc = subprocess.Popen(cmd)
-    time.sleep(5)
+    wait_for_port(port)
     return proc
+
+def kill_process(proc):
+    if proc.poll() is not None:
+        # already exited
+        return
+    try:
+        parent = psutil.Process(proc.pid)
+        children = parent.children(recursive=True)
+        for child in children:
+            child.kill()
+        parent.kill()
+    except psutil.NoSuchProcess:
+        pass
+
+# wait for port to be up with exponential backoff
+def wait_for_port(port, host="0.0.0.0", timeout=120):
+    start = time.time()
+    backoff = 1
+    while time.time() - start < timeout:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            if s.connect_ex((host, port)) == 0:
+                print(f"Port {port} is ready.")
+                return True
+        print(f"Waiting for port {port}...")
+        time.sleep(backoff)
+        backoff *= 2
+    raise TimeoutError(f"Timed out waiting for port {port}.")
 
 # verify the servers are up 
 def ensure_servers(args):
@@ -95,17 +126,16 @@ def ensure_servers(args):
         "--port", "8000"
     ]
 
-    processes.append(start_server("Controller Model Server", controller_cmd))
+    processes.append(start_server("Controller Model Server", controller_cmd, 8000))
 
     # vlm server
     vlm_cmd = [
         "vllm", "serve", args.vlm_model,
-        "--gpu-memory-utilization", "0.5",
-        "--max-model-len", "40000",
+        "--gpu-memory-utilization", "0.4",
         "--port", "6006",
         "--allowed-local-media-path", os.getcwd(),
     ]
-    processes.append(start_server("Vision-Language Model Server", vlm_cmd))
+    processes.append(start_server("Vision-Language Model Server", vlm_cmd, 6006))
 
     return processes
 
@@ -188,7 +218,7 @@ def main():
 
     finally:
         for p in procs:
-            p.terminate()
+            kill_process(p)
 
 if __name__ == "__main__":
     main()
