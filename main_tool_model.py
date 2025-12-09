@@ -205,6 +205,18 @@ def run_experiment(args):
     few_shot_prompt += "Use tools when needed." if args.use_tools else ""
     few_shot_prompt += "Always reply with a single line: 'Final Answer: <answer>'.\n\n"
 
+    # react prompt
+    if args.use_react:
+        few_shot_prompt = (
+            "You are a reasoning agent that answers questions about documents and charts. "
+            "You should think step by step and use tools when needed. "
+            "For each step:\n"
+            "1. Thought: your reasoning\n"
+            "2. Action: call a tool if needed\n"
+            "3. Observation: record the tool output\n"
+            "Finally, always return a single line as 'Final Answer: <answer>'.\n\n"
+        )
+
     # add few shot examples if enabled
     if args.use_fewshot:
         for k in range(args.start_index, args.start_index + args.shots):
@@ -230,7 +242,7 @@ def run_experiment(args):
         prompt = f"{few_shot_prompt}"
 
         # add cot if enabled
-        if args.use_cot:
+        if args.use_cot and not args.use_react:
             prompt += "Let's think step by step.\n"
 
         prompt += (
@@ -383,6 +395,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_tools", action="store_true", help="Enable tool calling-based prompting")
     parser.add_argument("--use_fewshot", action="store_true", help="Enable few-shot prompting")
     parser.add_argument("--use_cot", action="store_true", help="Enable chain-of-thought prompting")
+    parser.add_argument("--use_react", action="store_true", help="Enable ReAct-style prompting")
+
 
     args = parser.parse_args()
 
