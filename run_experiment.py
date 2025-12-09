@@ -3,6 +3,72 @@ import argparse
 import time
 import os
 from pathlib import Path
+import json
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","tool_calling","react"]):
+    results = {}
+    for mode in modes:
+        exp_dir = Path(f"{exp_dir_prefix}_{mode}")
+        if not exp_dir.exists():
+            continue
+
+        # Load predictions and ground truth
+        with open(exp_dir / "predictions.json") as f:
+            preds = json.load(f)
+        with open(exp_dir / "ground_truth.json") as f:
+            gts = json.load(f)
+        with open(exp_dir / "tool_metrics.json") as f:
+            tools = json.load(f)
+
+        # Compute simple accuracy
+        correct = sum(
+            preds[qid]["answer"].strip().lower() in [a.lower() for a in gts[qid]["answers"]]
+            for qid in preds
+        )
+        total = len(preds)
+        accuracy = correct / total
+
+        avg_tool_calls = sum(t.get("tool_total_count",0) for t in tools) / max(len(tools),1)
+        avg_latency = sum(t.get("tool_latency",0) for t in tools) / max(len(tools),1)
+
+        results[mode] = {
+            "accuracy": accuracy,
+            "avg_tool_calls": avg_tool_calls,
+            "avg_tool_latency": avg_latency
+        }
+
+    if not results:
+        print("No results found to plot.")
+        return
+
+    # Accuracy plot
+    plt.figure(figsize=(8,5))
+    sns.barplot(x=list(results.keys()), y=[r["accuracy"] for r in results.values()])
+    plt.ylabel("Accuracy")
+    plt.title("Ablation: Accuracy Across Methods")
+    plt.tight_layout()
+    plt.savefig(f"{exp_dir_prefix}_accuracy.png")
+    plt.close()
+
+    # Tool usage
+    plt.figure(figsize=(8,5))
+    sns.barplot(x=list(results.keys()), y=[r["avg_tool_calls"] for r in results.values()])
+    plt.ylabel("Avg Tool Calls per Sample")
+    plt.title("Ablation: Tool Usage Across Methods")
+    plt.tight_layout()
+    plt.savefig(f"{exp_dir_prefix}_tool_usage.png")
+    plt.close()
+
+    # Tool latency
+    plt.figure(figsize=(8,5))
+    sns.barplot(x=list(results.keys()), y=[r["avg_tool_latency"] for r in results.values()])
+    plt.ylabel("Avg Tool Latency (s)")
+    plt.title("Ablation: Tool Latency Across Methods")
+    plt.tight_layout()
+    plt.savefig(f"{exp_dir_prefix}_tool_latency.png")
+    plt.close()
 
 # start a server
 def start_server(description, cmd):
@@ -117,6 +183,8 @@ def main():
                 run_single_experiment(mode, args)
         else:
             run_single_experiment(args.mode, args)
+        print("\n=== Generating Ablation Plots ===")
+        plot_ablation_results(args.experiment_prefix)
 
     finally:
         for p in procs:

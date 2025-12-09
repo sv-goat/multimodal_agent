@@ -1,3 +1,5 @@
 openai
 vllm
 datasets
+matplotlib
+seaborn
