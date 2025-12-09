@@ -153,8 +153,8 @@ def define_tools():
         },
     ]
 
-def load_dataset(args, base_path):
-    if args.dataset == "docvqa":
+def get_fields_function(dataset, base_path):
+    if dataset == "docvqa":
         ds = load_dataset("lmms-lab/DocVQA", "DocVQA")
         def get_fields(sample_index: int) -> dict[str, Any]:
             s = ds[args.split][sample_index]
@@ -188,7 +188,7 @@ def run_experiment(args):
     tools = define_tools()
     
     base_path = os.getcwd()
-    get_fields = load_dataset(args, base_path)
+    get_fields = get_fields_function(args.dataset, base_path)
 
     openai_api_key = "EMPTY"
     openai_api_base = args.controller_base_url
