@@ -3,3 +3,4 @@ vllm
 datasets
 matplotlib
 seaborn
+pytesseract
