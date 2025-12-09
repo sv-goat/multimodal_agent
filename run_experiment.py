@@ -122,7 +122,7 @@ def ensure_servers(args):
         "vllm", "serve", args.controller_model,
         "--enable-auto-tool-choice",
         "--tool-call-parser", "hermes",
-        "--gpu-memory-utilization", "0.55",
+        "--gpu-memory-utilization", "0.6",
         "--port", "8000"
     ]
 
@@ -131,6 +131,7 @@ def ensure_servers(args):
     # vlm server
     vlm_cmd = [
         "vllm", "serve", args.vlm_model,
+        "--max-model-len", "40000", 
         "--gpu-memory-utilization", "0.35",
         "--port", "6006",
         "--allowed-local-media-path", os.getcwd(),
