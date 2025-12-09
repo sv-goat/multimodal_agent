@@ -1,0 +1,26 @@
+Metric,Experiment 1,Experiment 2,Improvement,Improvement %
+Accuracy,40%,61%,+21%,+52.5%
+Mean ANLS,0.431,0.639,+0.208,+48%
+Average Latency,16.03s,13.66s,-2.37s,-15%
+Tool Usage Rate,63%,96%,+33%,+52%
+Tool Latency,2.49s,0.865s,-1.625s,-65%
+Tokens/Sample,2037,1925,-112,-5%
+Median Latency,13.62s,13.22s,-0.40s,-3%
+Max Latency,29.82s,23.96s,-5.86s,-20%
+P95 Latency,27.72s,19.03s,-8.69s,-31%
+Latency Std Deviation,5.00s,2.63s,-2.37s,-47%
+Total Tool Calls,64,99,+35,+55%
+Avg Tool Calls/Sample,0.64,0.99,+0.35,+55%
+Tool Success Rate,100%,100%,0%,0%
+Max Tool Latency,5.81s,3.84s,-1.97s,-34%
+Total Tool Latency,156.83s,83.02s,-73.81s,-47%
+Total Prompt Tokens,145973,141810,-4163,-3%
+Total Completion Tokens,57707,50704,-7003,-12%
+Total Tokens,203680,192514,-11166,-5%
+Avg Prompt Tokens,1459.7,1418.1,-41.6,-3%
+Avg Completion Tokens,577.1,507.0,-70.1,-12%
+Peak Memory (MB),817,801,-16,-2%
+Avg Inference Time,7.24s,3.01s,-4.23s,-58%
+Avg Decode Time,7.18s,2.98s,-4.20s,-58%
+Avg HTTP Request Duration,6.66s,3.11s,-3.55s,-53%
+
