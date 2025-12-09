@@ -182,7 +182,7 @@ def get_fields_function(dataset, base_path):
                 "question_types": s.get("type", []),
                 "qid": str(s.get("id", sample_index)),
             }
-    return ds, get_fields
+    return get_fields
 
 def run_experiment(args):
     tools = define_tools()
