@@ -169,11 +169,11 @@ def get_fields_function(dataset, base_path):
             }
     else:
         # Minimal ChartQA wiring; adjust if field names differ in your local dataset
-        ds = load_dataset("ChartQA/ChartQA")
+        ds = load_dataset("lmms-lab/ChartQA", split="test")
         def get_fields(sample_index: int) -> dict[str, Any]:
-            s = ds[args.split][sample_index]
-            # You may need to adapt these keys for your installed ChartQA version
-            full_image_path = os.path.join(base_path, s.get("img_path", ""))
+            s = ds[sample_index]
+            image_path = f"images_chartqa/sample_{sample_index}.png"
+            full_image_path = os.path.join(base_path, image_path)
             answers = s.get("answers", [s.get("answer", "")])
             return {
                 "image_path": full_image_path,

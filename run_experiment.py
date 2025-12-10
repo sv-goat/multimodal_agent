@@ -9,38 +9,36 @@ import seaborn as sns
 import psutil
 import socket
 import time
+import threading
+from urllib import request as urlrequest
 
-def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","tool_calling","react"]):
+def plot_ablation_results(exp_dir):
     results = {}
-    for mode in modes:
-        exp_dir = Path(f"{exp_dir_prefix}_{mode}")
-        if not exp_dir.exists():
-            continue
 
-        # Load predictions and ground truth
-        with open(exp_dir / "predictions.json") as f:
-            preds = json.load(f)
-        with open(exp_dir / "ground_truth.json") as f:
-            gts = json.load(f)
-        with open(exp_dir / "tool_metrics.json") as f:
-            tools = json.load(f)
+    # Load predictions and ground truth
+    with open(exp_dir / "predictions.json") as f:
+        preds = json.load(f)
+    with open(exp_dir / "ground_truth.json") as f:
+        gts = json.load(f)
+    with open(exp_dir / "tool_metrics.json") as f:
+        tools = json.load(f)
 
-        # Compute simple accuracy
-        correct = sum(
-            preds[qid]["answer"].strip().lower() in [a.lower() for a in gts[qid]["answers"]]
-            for qid in preds
-        )
-        total = len(preds)
-        accuracy = correct / total
+    # Compute simple accuracy
+    correct = sum(
+        preds[qid]["answer"].strip().lower() in [a.lower() for a in gts[qid]["answers"]]
+        for qid in preds
+    )
+    total = len(preds)
+    accuracy = correct / total
 
-        avg_tool_calls = sum(t.get("tool_total_count",0) for t in tools) / max(len(tools),1)
-        avg_latency = sum(t.get("tool_latency",0) for t in tools) / max(len(tools),1)
+    avg_tool_calls = sum(t.get("tool_total_count",0) for t in tools) / max(len(tools),1)
+    avg_latency = sum(t.get("tool_latency",0) for t in tools) / max(len(tools),1)
 
-        results[mode] = {
-            "accuracy": accuracy,
-            "avg_tool_calls": avg_tool_calls,
-            "avg_tool_latency": avg_latency
-        }
+    results = {
+        "accuracy": accuracy,
+        "avg_tool_calls": avg_tool_calls,
+        "avg_tool_latency": avg_latency
+    }
 
     if not results:
         print("No results found to plot.")
@@ -52,7 +50,7 @@ def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","too
     plt.ylabel("Accuracy")
     plt.title("Ablation: Accuracy Across Methods")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir_prefix}_accuracy.png")
+    plt.savefig(f"{exp_dir}_accuracy.png")
     plt.close()
 
     # Tool usage
@@ -61,7 +59,7 @@ def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","too
     plt.ylabel("Avg Tool Calls per Sample")
     plt.title("Ablation: Tool Usage Across Methods")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir_prefix}_tool_usage.png")
+    plt.savefig(f"{exp_dir}_tool_usage.png")
     plt.close()
 
     # Tool latency
@@ -70,7 +68,7 @@ def plot_ablation_results(exp_dir_prefix, modes=["baseline","fewshot","cot","too
     plt.ylabel("Avg Tool Latency (s)")
     plt.title("Ablation: Tool Latency Across Methods")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir_prefix}_tool_latency.png")
+    plt.savefig(f"{exp_dir}_tool_latency.png")
     plt.close()
 
 # start a server
@@ -140,10 +138,9 @@ def ensure_servers(args):
 
     return processes
 
-def run_single_experiment(mode, args):
+def run_single_experiment(mode, args, out_name):
     print(f"\n=== Running Experiment Mode: {mode} ===")
 
-    out_name = f"{args.experiment_prefix}_{mode}"
     cmd = [
         "python",
         "main_tool_model.py",
@@ -161,12 +158,9 @@ def run_single_experiment(mode, args):
         "--experiment_name", out_name,
     ]
 
-    if mode == "baseline":
-        pass
-    elif mode == "fewshot":
+    if mode == "cot":
         cmd.append("--use_fewshot")
-    elif mode == "cot":
-        cmd.append("--use_fewshot")
+        cmd.append("--use_tools")
         cmd.append("--use_cot")
     elif mode == "tool_calling":
         cmd.append("--use_fewshot")
@@ -188,36 +182,79 @@ def main():
     parser.add_argument("--vlm_model", default="Qwen/Qwen3-VL-4B-Instruct")
     parser.add_argument("--vlm_base_url", default="http://0.0.0.0:6006/v1")
 
-    parser.add_argument("--mode", default="baseline",
-                        choices=["all", "baseline", "fewshot", "tool_calling", "cot", "react"])
-
+    parser.add_argument("--mode", default="cot", choices=["cot", "tool_calling", "react"])
     parser.add_argument("--shots", type=int, default=2)
-    parser.add_argument("--num_samples", type=int, default=20)
+    parser.add_argument("--num_samples", type=int, default=100)
     parser.add_argument("--start_index", type=int, default=0)
 
-    parser.add_argument("--experiment_prefix", type=str, default="ablations_qwen_docvqa_ocr_calc_vlm_1024")
-
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--top_p", type=float, default=0.8)
     parser.add_argument("--max_tokens", type=int, default=512)
+    parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
 
-    # for large scale experiments, avoid setup every time
-    parser.add_argument("--skip_server_setup", action="store_true")
+    parser.add_argument("--metrics_interval", type=int, default=60, help="Seconds between metrics polls")
+    parser.add_argument("--no_metrics_logging", action="store_true", help="Disable metrics logging to file")
 
     args = parser.parse_args()
 
     procs = ensure_servers(args)
 
+    # base prefix (without mode) so each mode run gets its own folder suffix
+    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_start{args.start_index}"
+    os.makedirs(out_name, exist_ok=True)
+
+    # Start metrics logger (poll controller /metrics) to track vllm server stats
+    metrics_threads = []
+    metrics_stop_events = []
+    metrics_logfile = None
+    if not args.no_metrics_logging:
+        def metrics_url_from_base(base):
+            u = base.rstrip('/')
+            if u.endswith('/v1'):
+                u = u[:-3]
+            return u.rstrip('/') + '/metrics'
+
+        metrics_controller_url = metrics_url_from_base(args.controller_base_url)
+        metrics_vlm_url = metrics_url_from_base(args.vlm_base_url)
+
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        # save metrics inside the per-mode experiment folder so they live with results
+        metrics_logfile = os.path.join(out_name, f"vllm_metrics_{timestamp}.log")
+
+        def metrics_logger(url, outpath, interval, stop_event):
+            with open(outpath, 'a', encoding='utf-8') as fh:
+                fh.write(f"Log started at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                while not stop_event.is_set():
+                    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+                    try:
+                        resp = urlrequest.urlopen(url, timeout=10)
+                        body = resp.read().decode('utf-8')
+                        fh.write(f"=== {ts} ({url}) ===\n")
+                        fh.write(body + '\n')
+                    except Exception as e:
+                        fh.write(f"=== {ts} ({url}) (ERROR fetching metrics): {e} ===\n")
+                    fh.flush()
+                    stop_event.wait(interval)
+                fh.write(f"Log ended at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+        for url in [metrics_controller_url, metrics_vlm_url]:
+            stop_event = threading.Event()
+            t = threading.Thread(target=metrics_logger, args=(url, metrics_logfile, args.metrics_interval, stop_event), daemon=True)
+            metrics_threads.append(t)
+            metrics_stop_events.append(stop_event)
+            t.start()
+
     try:
-        if args.mode == "all":
-            for mode in ["baseline", "fewshot", "tool_calling", "cot", "react"]:
-                run_single_experiment(mode, args)
-        else:
-            run_single_experiment(args.mode, args)
+        # run the requested mode; create per-mode out_name and pass to main
+        
+        run_single_experiment(args.mode, args, out_name)
         print("\n=== Generating Ablation Plots ===")
-        plot_ablation_results(args.experiment_prefix)
+        plot_ablation_results(out_name)
 
     finally:
+        # stop metrics threads
+        for ev in metrics_stop_events:
+            ev.set()
+        for t in metrics_threads:
+            t.join(timeout=5)
         for p in procs:
             kill_process(p)
 
