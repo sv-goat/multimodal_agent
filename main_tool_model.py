@@ -194,19 +194,41 @@ def get_fields_function(dataset, base_path):
     return get_fields
 
 def run_experiment(args):
+    # Map high-level mode to flags
+    if args.mode == "direct":
+        args.use_fewshot = True
+        args.use_cot = False
+        args.use_react = False
+        args.use_tools = False
+    elif args.mode == "cot":
+        args.use_fewshot = True
+        args.use_cot = True
+        args.use_react = False
+        args.use_tools = False
+    elif args.mode == "react":
+        args.use_fewshot = True
+        args.use_cot = False
+        args.use_react = True
+        args.use_tools = True
+
     tools = define_tools()
     
     base_path = os.getcwd()
     get_fields = get_fields_function(args.dataset, base_path)
 
     openai_api_key = "EMPTY"
-    openai_api_base = args.controller_base_url
+    # In vlm_only mode, talk directly to the VLM server; otherwise use controller
+    if args.vlm_only:
+        openai_api_base = args.vlm_base_url
+        model_name = "Qwen/Qwen3-VL-4B-Instruct"
+    else:
+        openai_api_base = args.controller_base_url
+        model_name = args.controller_model
+
     client = OpenAI(
         api_key=openai_api_key,
         base_url=openai_api_base,
     )
-
-    model_name = args.controller_model
 
     # Build few-shot prompt
     few_shot_prompt = "You are answering questions about documents and charts. "
@@ -450,7 +472,7 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str, default="validation", help="Dataset split.")
     parser.add_argument("--controller_base_url", type=str, default="http://0.0.0.0:8000/v1")
     parser.add_argument("--controller_model", type=str, default="Qwen/Qwen3-8B")
-    parser.add_argument("--vlm_base_url", type=str, default="http://0.0.0.0:6006/v1", help="For documentation only; vlm_as_a_tool uses this.")
+    parser.add_argument("--vlm_base_url", type=str, default="http://0.0.0.0:6006/v1", help="VLM server base URL (used when --vlm_only).")
     parser.add_argument("--shots", type=int, default=2, help="Number of in-context examples.")
     parser.add_argument("--num_samples", type=int, default=4, help="Number of evaluation samples.")
     parser.add_argument("--experiment_name", type=str, default="fewshot_qwen_docvqa_ocr_calc_vlm_1024", help="Experiment name used to create results folder.")
@@ -461,6 +483,9 @@ if __name__ == "__main__":
 
     # List of tool names to enable (will filter available tools to this list)
     parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
+
+    parser.add_argument("--mode", type=str, default="direct", choices=["direct", "cot", "react"], help="High-level prompting mode.")
+    parser.add_argument("--vlm_only", action="store_true", help="Use only VLM (no separate controller); tools still allowed if supported.")
 
     # add flags for experiments
     parser.add_argument("--use_tools", action="store_true", help="Enable tool calling-based prompting")

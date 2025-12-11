@@ -116,16 +116,16 @@ def ensure_servers(args):
 
     processes = []
 
-    # controller server
-    controller_cmd = [
-        "vllm", "serve", args.controller_model,
-        "--enable-auto-tool-choice",
-        "--tool-call-parser", "hermes",
-        "--gpu-memory-utilization", "0.6",
-        "--port", "8000"
-    ]
-
-    processes.append(start_server("Controller Model Server", controller_cmd, 8000))
+    # controller server (optional)
+    if not args.vlm_only:
+        controller_cmd = [
+            "vllm", "serve", args.controller_model,
+            "--enable-auto-tool-choice",
+            "--tool-call-parser", "hermes",
+            "--gpu-memory-utilization", "0.6",
+            "--port", "8000"
+        ]
+        processes.append(start_server("Controller Model Server", controller_cmd, 8000))
 
     # vlm server
     vlm_cmd = [
@@ -157,12 +157,18 @@ def run_single_experiment(mode, args, out_name, wandb_instance=None):
         "--top_p", str(args.top_p),
         "--max_tokens", str(args.max_tokens),
         "--experiment_name", out_name,
-        "--tools" + args.tools
+        "--mode", mode,
     ]
+
+    if args.vlm_only:
+        cmd.append("--vlm_only")
+
+    if args.tools:
+        cmd.append("--tools")
+        cmd.extend(args.tools)
 
     if mode == "cot":
         cmd.append("--use_fewshot")
-        cmd.append("--use_tools")
         cmd.append("--use_cot")
     elif mode == "tool_calling":
         cmd.append("--use_fewshot")
@@ -198,6 +204,7 @@ def main():
 
     parser.add_argument("--max_tokens", type=int, default=512)
     parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
+    parser.add_argument("--vlm_only", action="store_true", help="Use only the VLM (no separate controller server).")
 
     parser.add_argument("--metrics_interval", type=int, default=60, help="Seconds between metrics polls")
     parser.add_argument("--no_metrics_logging", action="store_true", help="Disable metrics logging to file")
@@ -221,8 +228,10 @@ def main():
                 u = u[:-3]
             return u.rstrip('/') + '/metrics'
 
-        metrics_controller_url = metrics_url_from_base(args.controller_base_url)
-        metrics_vlm_url = metrics_url_from_base(args.vlm_base_url)
+        metrics_urls = []
+        if not args.vlm_only:
+            metrics_urls.append(metrics_url_from_base(args.controller_base_url))
+        metrics_urls.append(metrics_url_from_base(args.vlm_base_url))
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         # save metrics inside the per-mode experiment folder so they live with results
@@ -244,7 +253,7 @@ def main():
                     stop_event.wait(interval)
                 fh.write(f"Log ended at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-        for url in [metrics_controller_url, metrics_vlm_url]:
+        for url in metrics_urls:
             stop_event = threading.Event()
             t = threading.Thread(target=metrics_logger, args=(url, metrics_logfile, args.metrics_interval, stop_event), daemon=True)
             metrics_threads.append(t)
