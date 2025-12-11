@@ -11,6 +11,7 @@ import socket
 import time
 import threading
 from urllib import request as urlrequest
+import wandb
 
 def plot_ablation_results(exp_dir):
     results = {}
@@ -138,7 +139,7 @@ def ensure_servers(args):
 
     return processes
 
-def run_single_experiment(mode, args, out_name):
+def run_single_experiment(mode, args, out_name, wandb_instance=None):
     print(f"\n=== Running Experiment Mode: {mode} ===")
 
     cmd = [
@@ -156,6 +157,7 @@ def run_single_experiment(mode, args, out_name):
         "--top_p", str(args.top_p),
         "--max_tokens", str(args.max_tokens),
         "--experiment_name", out_name,
+        "--tools" + args.tools
     ]
 
     if mode == "cot":
@@ -171,7 +173,14 @@ def run_single_experiment(mode, args, out_name):
         cmd.append("--use_react")
 
     print(" ".join(cmd))
-    subprocess.run(cmd, check=True)
+    # Set WandB environment variables so main_tool_model can call wandb.init() with sensible defaults
+    env = os.environ.copy()
+    # Use dataset as project and out_name as run name. WANDB_API_KEY should be set externally.
+    env["WANDB_PROJECT"] = "sllm_multimodal_agent"
+    env["WANDB_RUN_NAME"] = out_name
+    # Store local wandb files inside the experiment folder
+    env["WANDB_DIR"] = out_name
+    subprocess.run(cmd, check=True, env=env)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -182,7 +191,7 @@ def main():
     parser.add_argument("--vlm_model", default="Qwen/Qwen3-VL-4B-Instruct")
     parser.add_argument("--vlm_base_url", default="http://0.0.0.0:6006/v1")
 
-    parser.add_argument("--mode", default="cot", choices=["cot", "tool_calling", "react"])
+    parser.add_argument("--mode", default="cot", choices=["direct", "cot", "react"])
     parser.add_argument("--shots", type=int, default=2)
     parser.add_argument("--num_samples", type=int, default=100)
     parser.add_argument("--start_index", type=int, default=0)
@@ -244,8 +253,21 @@ def main():
 
     try:
         # run the requested mode; create per-mode out_name and pass to main
+
+        # Init wandb config for this experiment
+        wandb_config = {
+            "dataset": args.dataset,
+            "controller_model": args.controller_model,
+            "shots": args.shots,
+            "temperature": args.temperature,
+            "top_p": args.top_p,
+            "max_tokens": args.max_tokens,
+            "avail_tools": args.tools,
+            "mode": args.mode,
+        }
+        wandb.init(config=wandb_config)
         
-        run_single_experiment(args.mode, args, out_name)
+        run_single_experiment(args.mode, args, out_name, wandb_instance=wandb)
         print("\n=== Generating Ablation Plots ===")
         plot_ablation_results(out_name)
 
@@ -257,6 +279,9 @@ def main():
             t.join(timeout=5)
         for p in procs:
             kill_process(p)
+
+        # stop wandb
+        wandb.finish()
 
 if __name__ == "__main__":
     main()

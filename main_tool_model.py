@@ -8,6 +8,8 @@ from openai import OpenAI
 from datasets import load_dataset
 from vlm_as_a_tool import call_vl_model
 from tqdm import tqdm
+import wandb
+from docvqa_eval import compute_anls
 from pathlib import Path
 try:
     from PIL import Image  # type: ignore
@@ -89,7 +91,7 @@ def extract_answer(text: Optional[str]) -> str:
     return text.strip()
 
 def define_tools():
-    return [
+    avail_tools = [
         {
             "type": "function",
             "function": {
@@ -152,6 +154,13 @@ def define_tools():
             },
         },
     ]
+    allowed_tools = []
+    for tool in args.tools:
+        for available_tool in avail_tools:
+            if tool == available_tool["function"]["name"]:
+                allowed_tools.append(available_tool)
+    return allowed_tools
+
 
 def get_fields_function(dataset, base_path):
     if dataset == "docvqa":
@@ -233,6 +242,23 @@ def run_experiment(args):
     sample_latencies = []
     tool_metrics = []
     usage_metrics = []
+
+    # Prepare a W&B table to record per-sample results if W&B is initialized
+    results_table = wandb.Table(columns=["image", "user_prompt", "model_trace", "final_extracted_answer", "actual_answer", "anls"])
+
+    # Use existing ANLS computation from docvqa_eval
+    def best_similarity(pred: str, gts: list[str]) -> float:
+        if not pred:
+            return 0.0
+        best = 0.0
+        for gt in (gts or []):
+            try:
+                sim = compute_anls(pred, str(gt))
+                if sim > best:
+                    best = sim
+            except Exception:
+                continue
+        return float(best)
 
     eval_start = args.start_index + args.shots
     eval_end = eval_start + args.num_samples
@@ -358,6 +384,28 @@ def run_experiment(args):
         ground_truths[s['qid']] = {
             "answers": s['answers']
         }
+        # Append a row to the W&B table (if enabled)
+        trace_parts = []
+        for m in messages:
+            if isinstance(m, dict):
+                role = m.get('role', '')
+                content = m.get('content', '')
+                trace_parts.append(f"{role}: {content}")
+        model_trace = "\n".join(trace_parts)
+
+        image_field = None
+        image_field = wandb.Image(s.get('image_path'))
+
+        anls_score = best_similarity(final_answer, s.get('answers', []))
+
+        results_table.add_data(
+            image_field,
+            prompt,
+            model_trace,
+            final_answer,
+            s.get('answers'),
+            anls_score,
+        )
     
     experiment_prefix = args.experiment_name
     exp_dir = Path(experiment_prefix)
@@ -375,6 +423,26 @@ def run_experiment(args):
     with open(exp_dir / "usage_metrics.json", "w", encoding='utf-8') as f:
         json.dump(usage_metrics, f, indent=2)
 
+    # Log the W&B table once at the end of the run (if enabled)
+    wandb.log({"results_table": results_table})
+    # Compute run-level metrics (mean ANLS and accuracy) and log to W&B
+    anls_list = []
+    correct = 0
+    total_q = 0
+    # Compute mean ANLS from the individual ANLS scores from the table
+    for row in results_table.data:
+        anls = row[-1]  # ANLS is the last column
+        anls_list.append(anls)
+        total_q += 1
+        if anls > 0.0:
+            correct += 1
+
+    mean_anls = (sum(anls_list) / len(anls_list)) if anls_list else 0.0
+    accuracy = (correct / total_q) if total_q > 0 else 0.0
+    # Log run-level metrics to W&B if available
+    if getattr(wandb, 'run', None) is not None:
+        wandb.log({"mean_anls": mean_anls, "accuracy": accuracy, "n_questions": total_q})
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run tool-augmented DocVQA/ChartQA pipeline.")
@@ -391,6 +459,9 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=0.8)
     parser.add_argument("--max_tokens", type=int, default=512)
 
+    # List of tool names to enable (will filter available tools to this list)
+    parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
+
     # add flags for experiments
     parser.add_argument("--use_tools", action="store_true", help="Enable tool calling-based prompting")
     parser.add_argument("--use_fewshot", action="store_true", help="Enable few-shot prompting")
@@ -399,5 +470,28 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+    # Initialize Weights & Biases if available and configured via environment (run_experiment sets WANDB_ env vars)
+    wandb_project = os.environ.get("WANDB_PROJECT")
+    wandb_name = os.environ.get("WANDB_RUN_NAME")
+    wandb_dir = os.environ.get("WANDB_DIR")
+    wandb_mode = os.environ.get("WANDB_MODE")  # optional: 'offline' or 'online'
+
+    init_kwargs = {}
+    if wandb_project:
+        init_kwargs["project"] = wandb_project
+    if wandb_name:
+        init_kwargs["name"] = wandb_name
+    if wandb_dir:
+        init_kwargs["dir"] = wandb_dir
+    if wandb_mode:
+        init_kwargs["mode"] = wandb_mode
+
+    if init_kwargs:
+        wandb.init(reinit=True, **init_kwargs)
+        print(f"W&B initialized with: {init_kwargs}")
+    else:
+        # fallback: attempt a default init (harmless if WANDB_API_KEY not set)
+        wandb.init(reinit=True)
+        print("W&B initialized with default settings")
 
     run_experiment(args)
