@@ -210,6 +210,14 @@ def run_experiment(args):
         args.use_cot = False
         args.use_react = True
         args.use_tools = True
+   
+        with open("react_traces.json", "r") as f:
+            react_data = json.load(f)
+
+        react_traces_map = {
+            sample["fields"]["qid"]: sample["react_trace"]
+            for sample in react_data["samples"]
+        }
 
     tools = define_tools()
     
@@ -252,12 +260,21 @@ def run_experiment(args):
     if args.use_fewshot:
         for k in range(args.start_index, args.start_index + args.shots):
             s = get_fields(k)
-            few_shot_prompt += (
-                f"Image path: {s['image_path']}\n"
-                f"Question Types: {s['question_types']}\n"
-                f"Q: {s['question']}\n"
-                f"A: {s['answers']}\n\n"
-            )
+            if args.use_react and (qid := s['qid']) in react_traces_map:
+                trace = react_traces_map[qid]
+                few_shot_prompt += (
+                    f"Image path: {s['image_path']}\n"
+                    f"Question Types: {s['question_types']}\n"
+                    f"Q: {s['question']}\n"
+                    f"{trace}\n\n"
+                )
+            else:
+                few_shot_prompt += (
+                    f"Image path: {s['image_path']}\n"
+                    f"Question Types: {s['question_types']}\n"
+                    f"Q: {s['question']}\n"
+                    f"A: {s['answers']}\n\n"
+                )
 
     predictions = {}
     ground_truths = {}
@@ -294,12 +311,14 @@ def run_experiment(args):
             prompt += "Let's think step by step.\n"
 
         prompt += (
-            "Now answer the following. "
+            "Now answer the following "
+            + ("using ReAct reasoning, " if args.use_react else ". ")
             + ("Use tools if helpful. " if args.use_tools else "")
             + "Return only one line as 'Final Answer: <answer>'.\n"
             + "Image path: {s['image_path']}\n"
             + "Question Types: {s['question_types']}\n"
-            + "Q: {s['question']}\nA: "
+            + "Q: {s['question']}\n"
+            + ("A:" if not args.use_react else "")
         )
 
         messages = [
