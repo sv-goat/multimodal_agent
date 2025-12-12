@@ -60,12 +60,20 @@ def build_react_trace(client, model_name, fields, max_retries = 1):
 
     image_data_url = encode_image(image_path)
 
-    # Use a single string message so it's compatible with standard OpenAI chat APIs.
-    user_content = (
-        f"Question: {question}\n\n"
-        f"Image (base64): {image_data_url}\n\n"
-        "Produce the ReAct reasoning trace following the required format."
-    )
+    # need to submit this way to keep token limits
+    user_content = [
+        {
+            "type": "text",
+            "text": (
+                f"Question: {question}\n\n"
+                "Produce the ReAct reasoning trace following the required format."
+            ),
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": image_data_url},
+        },
+    ]
 
     last_err = None
 
@@ -125,7 +133,7 @@ if __name__ == "__main__":
         client,
         split="validation",
         output_path="react_traces.json",
-        num_samples = 10
+        num_samples = 25,
     )
 
     # show first 5 examples
