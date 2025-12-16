@@ -12,16 +12,17 @@ import time
 import threading
 from urllib import request as urlrequest
 import wandb
+import signal
 
 def plot_ablation_results(exp_dir):
     results = {}
 
     # Load predictions and ground truth
-    with open(exp_dir / "predictions.json") as f:
+    with open(os.path.join(exp_dir, "predictions.json")) as f:
         preds = json.load(f)
-    with open(exp_dir / "ground_truth.json") as f:
+    with open(os.path.join(exp_dir, "ground_truth.json")) as f:
         gts = json.load(f)
-    with open(exp_dir / "tool_metrics.json") as f:
+    with open(os.path.join(exp_dir, "tool_metrics.json")) as f:
         tools = json.load(f)
 
     # Compute simple accuracy
@@ -46,55 +47,68 @@ def plot_ablation_results(exp_dir):
         return
 
     # Accuracy plot
-    plt.figure(figsize=(8,5))
-    sns.barplot(x=list(results.keys()), y=[r["accuracy"] for r in results.values()])
+    plt.figure(figsize=(6,4))
+    sns.barplot(x=["accuracy"], y=[results["accuracy"]])
     plt.ylabel("Accuracy")
-    plt.title("Ablation: Accuracy Across Methods")
+    plt.title("Ablation: Accuracy")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir}_accuracy.png")
+    plt.savefig(os.path.join(exp_dir, "accuracy.png"))
     plt.close()
 
     # Tool usage
-    plt.figure(figsize=(8,5))
-    sns.barplot(x=list(results.keys()), y=[r["avg_tool_calls"] for r in results.values()])
+    plt.figure(figsize=(6,4))
+    sns.barplot(x=["avg_tool_calls"], y=[results["avg_tool_calls"]])
     plt.ylabel("Avg Tool Calls per Sample")
-    plt.title("Ablation: Tool Usage Across Methods")
+    plt.title("Ablation: Tool Usage")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir}_tool_usage.png")
+    plt.savefig(os.path.join(exp_dir, "tool_usage.png"))
     plt.close()
 
     # Tool latency
-    plt.figure(figsize=(8,5))
-    sns.barplot(x=list(results.keys()), y=[r["avg_tool_latency"] for r in results.values()])
+    plt.figure(figsize=(6,4))
+    sns.barplot(x=["avg_tool_latency"], y=[results["avg_tool_latency"]])
     plt.ylabel("Avg Tool Latency (s)")
-    plt.title("Ablation: Tool Latency Across Methods")
+    plt.title("Ablation: Tool Latency")
     plt.tight_layout()
-    plt.savefig(f"{exp_dir}_tool_latency.png")
+    plt.savefig(os.path.join(exp_dir, "tool_latency.png"))
     plt.close()
 
 # start a server
 def start_server(description, cmd, port):
     print(f"\n=== Starting {description} ===")
     print(" ".join(cmd))
-    proc = subprocess.Popen(cmd)
+    # Start in new process group so we can kill entire tree later
+    proc = subprocess.Popen(cmd, start_new_session=True)
     wait_for_port(port)
     return proc
 
 def kill_process(proc):
+    """Kill process and all children, then wait for termination."""
     if proc.poll() is not None:
-        # already exited
-        return
+        return  # already exited
     try:
-        parent = psutil.Process(proc.pid)
-        children = parent.children(recursive=True)
-        for child in children:
-            child.kill()
-        parent.kill()
-    except psutil.NoSuchProcess:
+        # Kill the entire process group if possible
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        # Fallback: kill just the process
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
         pass
 
+def kill_vllm_on_port(port):
+    """Kill any process listening on the given port."""
+    # Use fuser to find and kill processes on the port
+    subprocess.run(f"fuser -k {port}/tcp", shell=True, stderr=subprocess.DEVNULL)
+    # Also kill any remaining vllm processes owned by this user
+    subprocess.run("pkill -9 -f 'vllm serve'", shell=True, stderr=subprocess.DEVNULL)
+
 # wait for port to be up with exponential backoff
-def wait_for_port(port, host="0.0.0.0", timeout=240):
+def wait_for_port(port, host="0.0.0.0", timeout=1200):
     start = time.time()
     backoff = 1
     while time.time() - start < timeout:
@@ -110,32 +124,18 @@ def wait_for_port(port, host="0.0.0.0", timeout=240):
 
 # verify the servers are up 
 def ensure_servers(args):
-    if args.skip_server_setup:
-        print("Skipping server startup.")
-        return []
 
     processes = []
 
-    # controller server (optional)
-    if not args.vlm_only:
-        controller_cmd = [
-            "vllm", "serve", args.controller_model,
-            "--enable-auto-tool-choice",
-            "--tool-call-parser", "hermes",
-            "--gpu-memory-utilization", "0.6",
-            "--port", "8000"
-        ]
-        processes.append(start_server("Controller Model Server", controller_cmd, 8000))
-
     # vlm server
     vlm_cmd = [
-        "vllm", "serve", args.vlm_model,
+        "vllm", "serve", args.model,
         "--max-model-len", "40000", 
-        "--gpu-memory-utilization", "0.35",
-        "--port", "6006",
+        "--gpu-memory-utilization", "0.95",
+        "--port", "8000",
         "--allowed-local-media-path", os.getcwd(),
     ]
-    processes.append(start_server("Vision-Language Model Server", vlm_cmd, 6006))
+    processes.append(start_server("Vision-Language Model Server", vlm_cmd, 8000))
 
     return processes
 
@@ -147,21 +147,14 @@ def run_single_experiment(mode, args, out_name, wandb_instance=None):
         "main_tool_model.py",
         "--dataset", args.dataset,
         "--split", args.split,
-        "--controller_base_url", args.controller_base_url,
-        "--controller_model", args.controller_model,
-        "--vlm_base_url", args.vlm_base_url,
+        "--model", args.model,
+        "--model_url", args.model_url,
         "--shots", str(args.shots),
         "--num_samples", str(args.num_samples),
-        "--start_index", str(args.start_index),
-        "--temperature", str(args.temperature),
-        "--top_p", str(args.top_p),
         "--max_tokens", str(args.max_tokens),
         "--experiment_name", out_name,
         "--mode", mode,
     ]
-
-    if args.vlm_only:
-        cmd.append("--vlm_only")
 
     if args.tools:
         cmd.append("--tools")
@@ -192,29 +185,45 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="docvqa")
     parser.add_argument("--split", default="validation")
-    parser.add_argument("--controller_model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--controller_base_url", default="http://0.0.0.0:8000/v1")
-    parser.add_argument("--vlm_model", default="Qwen/Qwen3-VL-4B-Instruct")
-    parser.add_argument("--vlm_base_url", default="http://0.0.0.0:6006/v1")
+    parser.add_argument("--model", default="Qwen/Qwen3-VL-4B-Instruct")
+    parser.add_argument("--model_url", default="http://0.0.0.0:8000/v1")
 
     parser.add_argument("--mode", default="cot", choices=["direct", "cot", "react"])
     parser.add_argument("--shots", type=int, default=2)
     parser.add_argument("--num_samples", type=int, default=100)
-    parser.add_argument("--start_index", type=int, default=0)
 
     parser.add_argument("--max_tokens", type=int, default=512)
-    parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
-    parser.add_argument("--vlm_only", action="store_true", help="Use only the VLM (no separate controller server).")
+    parser.add_argument("--tools", nargs='*', default=None, help="List of tool names to enable (or a single comma-separated string)")
 
     parser.add_argument("--metrics_interval", type=int, default=60, help="Seconds between metrics polls")
     parser.add_argument("--no_metrics_logging", action="store_true", help="Disable metrics logging to file")
 
     args = parser.parse_args()
 
+    # Normalize args.tools into a clean list of tool names.
+    # Support these input styles:
+    #  - --tools calculator extract_text_from_image
+    #  - --tools calculator,extract_text_from_image
+    #  - default string value from the parser
+    if isinstance(args.tools, str):
+        # single string, possibly comma-separated
+        args.tools = [t.strip() for t in args.tools.split(',') if t.strip()]
+    elif args.tools is None:
+        args.tools = []
+    else:
+        # list: flatten any comma-separated entries inside the list
+        normalized = []
+        for t in args.tools:
+            if isinstance(t, str) and ',' in t:
+                normalized.extend([x.strip() for x in t.split(',') if x.strip()])
+            elif t:
+                normalized.append(t)
+        args.tools = normalized
+
     procs = ensure_servers(args)
 
     # base prefix (without mode) so each mode run gets its own folder suffix
-    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_start{args.start_index}"
+    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_model{args.model.replace('/', '_')}_maxtokens{args.max_tokens}"
     os.makedirs(out_name, exist_ok=True)
 
     # Start metrics logger (poll controller /metrics) to track vllm server stats
@@ -228,10 +237,7 @@ def main():
                 u = u[:-3]
             return u.rstrip('/') + '/metrics'
 
-        metrics_urls = []
-        if not args.vlm_only:
-            metrics_urls.append(metrics_url_from_base(args.controller_base_url))
-        metrics_urls.append(metrics_url_from_base(args.vlm_base_url))
+        metrics_urls = [metrics_url_from_base(args.model_url)]
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         # save metrics inside the per-mode experiment folder so they live with results
@@ -266,12 +272,10 @@ def main():
         # Init wandb config for this experiment
         wandb_config = {
             "dataset": args.dataset,
-            "controller_model": args.controller_model,
+            "model": args.model,
             "shots": args.shots,
-            "temperature": args.temperature,
-            "top_p": args.top_p,
             "max_tokens": args.max_tokens,
-            "avail_tools": args.tools,
+            "tools": args.tools,
             "mode": args.mode,
         }
         wandb.init(config=wandb_config)
@@ -286,8 +290,16 @@ def main():
             ev.set()
         for t in metrics_threads:
             t.join(timeout=5)
+        # kill vllm server(s)
         for p in procs:
             kill_process(p)
+        # Force kill anything still on port 8000
+        kill_vllm_on_port(8000)
+
+        # close metrics log
+        if metrics_logfile:
+            with open(metrics_logfile, 'a', encoding='utf-8') as fh:
+                fh.write(f"Log ended at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         # stop wandb
         wandb.finish()

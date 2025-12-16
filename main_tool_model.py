@@ -106,7 +106,6 @@ def define_tools():
                         },
                         "prompt": {
                             "type": "string",
-                            "description": "Instruction/question about the image.",
                             "default": "Describe the image in detail.",
                         },
                     },
@@ -205,6 +204,9 @@ def run_experiment(args):
         args.use_cot = True
         args.use_react = False
         args.use_tools = False
+
+        with open("fewshot_library/cot_docvqa.json", "r") as f:
+            cot_data = json.load(f)
     elif args.mode == "react":
         args.use_fewshot = True
         args.use_cot = False
@@ -214,8 +216,9 @@ def run_experiment(args):
         with open("react_traces.json", "r") as f:
             react_data = json.load(f)
 
+        # Drill into nested structure: sample["react_trace"]["react_trace"] is the string trace
         react_traces_map = {
-            sample["fields"]["qid"]: sample["react_trace"]
+            sample["fields"]["qid"]: sample["react_trace"]["react_trace"]
             for sample in react_data["samples"]
         }
 
@@ -225,13 +228,9 @@ def run_experiment(args):
     get_fields = get_fields_function(args.dataset, base_path)
 
     openai_api_key = "EMPTY"
-    # In vlm_only mode, talk directly to the VLM server; otherwise use controller
-    if args.vlm_only:
-        openai_api_base = args.vlm_base_url
-        model_name = "Qwen/Qwen3-VL-4B-Instruct"
-    else:
-        openai_api_base = args.controller_base_url
-        model_name = args.controller_model
+
+    openai_api_base = args.model_url
+    model_name = args.model
 
     client = OpenAI(
         api_key=openai_api_key,
@@ -258,7 +257,7 @@ def run_experiment(args):
 
     # add few shot examples if enabled
     if args.use_fewshot:
-        for k in range(args.start_index, args.start_index + args.shots):
+        for k in range(args.shots):
             s = get_fields(k)
             if args.use_react and (qid := s['qid']) in react_traces_map:
                 trace = react_traces_map[qid]
@@ -268,6 +267,14 @@ def run_experiment(args):
                     f"Q: {s['question']}\n"
                     f"{trace}\n\n"
                 )
+            elif args.use_cot:
+                few_shot_prompt += (
+                    f"Image path: {s['image_path']}\n"
+                    f"Question Types: {s['question_types']}\n"
+                    f"Q: {s['question']}\n"
+                    f"{cot_data[f'sample_{k}']}\n\n"
+                )
+
             else:
                 few_shot_prompt += (
                     f"Image path: {s['image_path']}\n"
@@ -299,28 +306,18 @@ def run_experiment(args):
                 continue
         return float(best)
 
-    eval_start = args.start_index + args.shots
+    eval_start = args.shots
     eval_end = eval_start + args.num_samples
     for i in tqdm(range(eval_start, eval_end)):
         s = get_fields(i)
-
-        prompt = f"{few_shot_prompt}"
-
-        # add cot if enabled
-        if args.use_cot and not args.use_react:
-            prompt += "Let's think step by step.\n"
-
-        prompt += (
-            "Now answer the following "
-            + ("using ReAct reasoning, " if args.use_react else ". ")
-            + ("Use tools if helpful. " if args.use_tools else "")
-            + "Return only one line as 'Final Answer: <answer>'.\n"
-            + "Image path: {s['image_path']}\n"
-            + "Question Types: {s['question_types']}\n"
-            + "Q: {s['question']}\n"
-            + ("A:" if not args.use_react else "")
+        prompt = (
+            f"{few_shot_prompt}"
+            f"Now answer the following. Use tools if helpful. "
+            f"Return only one line as 'Final Answer: <answer>'.\n"
+            f"Image path: {s['image_path']}\n"
+            f"Question Types: {s['question_types']}\n"
+            f"Q: {s['question']}\nA: "
         )
-
         messages = [
             {"role": "user", "content": f"{prompt}"},
         ]
@@ -333,8 +330,6 @@ def run_experiment(args):
             model=model_name,
             messages=messages,
             tools=tools if args.use_tools else None, # add tools if enabled
-            temperature=args.temperature,
-            top_p=args.top_p,
             max_tokens=args.max_tokens,
             extra_body={
                 "repetition_penalty": 1.05,
@@ -347,6 +342,9 @@ def run_experiment(args):
             completion_tokens += response.usage.completion_tokens
 
         messages.append(response.choices[0].message.model_dump())
+
+        print("--- Response ---")
+        print(messages[-1]['content'])
 
         # Loop through in case there are a series of tool calls. 
         stop_reason = response.choices[0].finish_reason
@@ -379,13 +377,14 @@ def run_experiment(args):
                 model=model_name,
                 messages=messages,
                 tools=tools,
-                temperature=args.temperature,
-                top_p=args.top_p,
                 max_tokens=args.max_tokens,
                 extra_body={
                     "repetition_penalty": 1.05,
                 },
             )
+
+            print("--- Response ---")
+            print(response.choices[0].message.content)
 
             messages.append(response.choices[0].message.model_dump())
             stop_reason = response.choices[0].finish_reason
@@ -425,43 +424,22 @@ def run_experiment(args):
         ground_truths[s['qid']] = {
             "answers": s['answers']
         }
-        # Append a row to the W&B table (if enabled)
-        trace_parts = []
-        for m in messages:
-            if isinstance(m, dict):
-                role = m.get('role', '')
-                content = m.get('content', '')
-                trace_parts.append(f"{role}: {content}")
-        model_trace = "\n".join(trace_parts)
 
-        image_field = None
-        image_field = wandb.Image(s.get('image_path'))
-
-        anls_score = best_similarity(final_answer, s.get('answers', []))
-
-        results_table.add_data(
-            image_field,
-            prompt,
-            model_trace,
-            final_answer,
-            s.get('answers'),
-            anls_score,
-        )
-    
+    # Save predictions and ground truths
     experiment_prefix = args.experiment_name
-    exp_dir = Path(experiment_prefix)
-    exp_dir.mkdir(parents=True, exist_ok=True)
+    if not os.path.exists(experiment_prefix):
+        os.makedirs(experiment_prefix)
 
-    with open(exp_dir / "predictions.json", "w", encoding='utf-8') as f:
+    with open(os.path.join(experiment_prefix, "predictions.json"), "w", encoding='utf-8') as f:
         json.dump(predictions, f, indent=2)
-    with open(exp_dir / "ground_truth.json", "w", encoding='utf-8') as f:
+    with open(os.path.join(experiment_prefix, "ground_truth.json"), "w", encoding='utf-8') as f:
         json.dump(ground_truths, f, indent=2)
 
-    with open(exp_dir / "sample_latencies.json", "w", encoding='utf-8') as f:
+    with open(os.path.join(experiment_prefix, "sample_latencies.json"), "w", encoding='utf-8') as f:
         json.dump(sample_latencies, f, indent=2)
-    with open(exp_dir / "tool_metrics.json", "w", encoding='utf-8') as f:
+    with open(os.path.join(experiment_prefix, "tool_metrics.json"), "w", encoding='utf-8') as f:
         json.dump(tool_metrics, f, indent=2)
-    with open(exp_dir / "usage_metrics.json", "w", encoding='utf-8') as f:
+    with open(os.path.join(experiment_prefix, "usage_metrics.json"), "w", encoding='utf-8') as f:
         json.dump(usage_metrics, f, indent=2)
 
     # Log the W&B table once at the end of the run (if enabled)
@@ -489,22 +467,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run tool-augmented DocVQA/ChartQA pipeline.")
     parser.add_argument("--dataset", type=str, default="docvqa", choices=["docvqa", "chartqa"], help="Dataset to use.")
     parser.add_argument("--split", type=str, default="validation", help="Dataset split.")
-    parser.add_argument("--controller_base_url", type=str, default="http://0.0.0.0:8000/v1")
-    parser.add_argument("--controller_model", type=str, default="Qwen/Qwen3-8B")
-    parser.add_argument("--vlm_base_url", type=str, default="http://0.0.0.0:6006/v1", help="VLM server base URL (used when --vlm_only).")
+    parser.add_argument("--model_url", type=str, default="http://0.0.0.0:8000/v1")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-8B")
     parser.add_argument("--shots", type=int, default=2, help="Number of in-context examples.")
     parser.add_argument("--num_samples", type=int, default=4, help="Number of evaluation samples.")
     parser.add_argument("--experiment_name", type=str, default="fewshot_qwen_docvqa_ocr_calc_vlm_1024", help="Experiment name used to create results folder.")
-    parser.add_argument("--start_index", type=int, default=0, help="Start index in the split.")
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--top_p", type=float, default=0.8)
     parser.add_argument("--max_tokens", type=int, default=512)
 
     # List of tool names to enable (will filter available tools to this list)
-    parser.add_argument("--tools", nargs='*', default=["get_image_description"], help="List of tool names to enable")
+    # Accept either multiple tokens (--tools a b) or a single comma-separated string (--tools a,b)
+    parser.add_argument("--tools", nargs='*', default=None, help="List of tool names to enable (or a single comma-separated string)")
 
     parser.add_argument("--mode", type=str, default="direct", choices=["direct", "cot", "react"], help="High-level prompting mode.")
-    parser.add_argument("--vlm_only", action="store_true", help="Use only VLM (no separate controller); tools still allowed if supported.")
 
     # add flags for experiments
     parser.add_argument("--use_tools", action="store_true", help="Enable tool calling-based prompting")
@@ -514,6 +488,19 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+    # Normalize args.tools to a flat list of names
+    if isinstance(args.tools, str):
+        args.tools = [t.strip() for t in args.tools.split(',') if t.strip()]
+    elif args.tools is None:
+        args.tools = []
+    else:
+        flattened = []
+        for t in args.tools:
+            if isinstance(t, str) and ',' in t:
+                flattened.extend([x.strip() for x in t.split(',') if x.strip()])
+            elif t:
+                flattened.append(t)
+        args.tools = flattened
     # Initialize Weights & Biases if available and configured via environment (run_experiment sets WANDB_ env vars)
     wandb_project = os.environ.get("WANDB_PROJECT")
     wandb_name = os.environ.get("WANDB_RUN_NAME")
