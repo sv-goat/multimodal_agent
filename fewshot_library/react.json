@@ -24,6 +24,6 @@
   },
   {
     "role": "assistant",
-    [cite_start]"content": "The OCR output confirms the chart is about \"Age Adjusted Motor Vehicle Accident Mortality Rate Canada\"[cite: 2]. [cite_start]The y-axis is labeled \"PER 1000\" with values from 0.2 to 0.3, and the x-axis shows years from 1950 to 1980[cite: 2]. [cite_start]The legend indicates the solid line is for \"ACTUAL\" data[cite: 2]. I need to find the value for the year 1975 on the \"ACTUAL\" line. [cite_start]Locating 1975 on the x-axis and moving up to the solid line, the point aligns with the y-axis value of 0.28[cite: 2].\nFinal Answer: 0.28"
+    "content": "The OCR output confirms the chart is about \"Age Adjusted Motor Vehicle Accident Mortality Rate Canada\". The y-axis is labeled \"PER 1000\" with values from 0.2 to 0.3, and the x-axis shows years from 1950 to 1980. The legend indicates the solid line is for \"ACTUAL\" data. I need to find the value for the year 1975 on the \"ACTUAL\" line. Locating 1975 on the x-axis and moving up to the solid line, the point aligns with the y-axis value of 0.28.\nFinal Answer: 0.28"
   }
 ]

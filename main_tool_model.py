@@ -213,14 +213,9 @@ def run_experiment(args):
         args.use_react = True
         args.use_tools = True
    
-        with open("react_traces.json", "r") as f:
-            react_data = json.load(f)
-
-        # Drill into nested structure: sample["react_trace"]["react_trace"] is the string trace
-        react_traces_map = {
-            sample["fields"]["qid"]: sample["react_trace"]["react_trace"]
-            for sample in react_data["samples"]
-        }
+        # react.json is a list of chat messages (OpenAI format) for one example
+        with open("fewshot_library/react.json", "r") as f:
+            react_fewshot_messages = json.load(f)
 
     tools = define_tools()
     
@@ -247,34 +242,26 @@ def run_experiment(args):
     if args.use_react:
         few_shot_prompt = (
             "You are a reasoning agent that answers questions about documents and charts. "
-            "You should think step by step and use tools when needed. "
-            "For each step:\n"
+            "Use tools when needed. "
+            "Think step-by-step.:\n"
             "1. Thought: your reasoning\n"
             "2. Action: call a tool if needed\n"
             "3. Observation: record the tool output\n"
             "Finally, always return a single line as 'Final Answer: <answer>'.\n\n"
         )
 
-    # add few shot examples if enabled
-    if args.use_fewshot:
+    # add few shot examples to string prompt (for non-ReAct modes only)
+    # ReAct mode uses multi-turn messages instead, handled in the eval loop
+    if args.use_fewshot and not args.use_react:
         for k in range(args.shots):
             s = get_fields(k)
-            if args.use_react and (qid := s['qid']) in react_traces_map:
-                trace = react_traces_map[qid]
-                few_shot_prompt += (
-                    f"Image path: {s['image_path']}\n"
-                    f"Question Types: {s['question_types']}\n"
-                    f"Q: {s['question']}\n"
-                    f"{trace}\n\n"
-                )
-            elif args.use_cot:
+            if args.use_cot:
                 few_shot_prompt += (
                     f"Image path: {s['image_path']}\n"
                     f"Question Types: {s['question_types']}\n"
                     f"Q: {s['question']}\n"
                     f"{cot_data[f'sample_{k}']}\n\n"
                 )
-
             else:
                 few_shot_prompt += (
                     f"Image path: {s['image_path']}\n"
@@ -310,17 +297,41 @@ def run_experiment(args):
     eval_end = eval_start + args.num_samples
     for i in tqdm(range(eval_start, eval_end)):
         s = get_fields(i)
-        prompt = (
-            f"{few_shot_prompt}"
-            f"Now answer the following. Use tools if helpful. "
-            f"Return only one line as 'Final Answer: <answer>'.\n"
-            f"Image path: {s['image_path']}\n"
-            f"Question Types: {s['question_types']}\n"
-            f"Q: {s['question']}\nA: "
-        )
-        messages = [
-            {"role": "user", "content": f"{prompt}"},
-        ]
+        
+        # Build messages list
+        if args.use_react:
+            # For ReAct: inject few-shot as actual multi-turn messages
+            system_prompt = (
+                "You are a reasoning agent that answers questions about documents and charts. "
+                "You have access to tools. Use them when needed to extract information from images. "
+                "Always end with 'Final Answer: <answer>'."
+            )
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            # Add few-shot example as actual conversation turns
+            if args.use_fewshot:
+                messages.extend(react_fewshot_messages)
+            
+            # Add the current question
+            user_query = (
+                f"Image path: {s['image_path']}\n"
+                f"Question Types: {s['question_types']}\n"
+                f"Q: {s['question']}\nA:"
+            )
+            messages.append({"role": "user", "content": user_query})
+        else:
+            # For non-ReAct modes: use the string prompt approach
+            prompt = (
+                f"{few_shot_prompt}"
+                f"Now answer the following. "
+                f"Return only one line as 'Final Answer: <answer>'.\n"
+                f"Image path: {s['image_path']}\n"
+                f"Question Types: {s['question_types']}\n"
+                f"Q: {s['question']}\nA: "
+            )
+            messages = [
+                {"role": "user", "content": f"{prompt}"},
+            ]
 
         sample_start_time = time.time()
         prompt_tokens = 0
@@ -352,6 +363,7 @@ def run_experiment(args):
         success_count = 0
         total_count = 0
         while args.use_tools and (stop_reason == "tool_calls" or stop_reason == "tool_call"):
+            print("--- Tool Calls ---")
             tool_start_time = time.time()
             if tool_calls := messages[-1].get("tool_calls", None):
                 for tool_call in tool_calls:
@@ -411,6 +423,17 @@ def run_experiment(args):
 
         raw_answer = messages[-1]['content']
         final_answer = extract_answer(raw_answer)
+
+        # Compute ANLS for this sample and add to W&B table
+        anls_score = best_similarity(final_answer, s['answers'])
+        results_table.add_data(
+            wandb.Image(s['image_path']),
+            s['question'],
+            raw_answer,  # full model trace
+            final_answer,
+            s['answers'],
+            anls_score,
+        )
 
         print(f"Sample {i}:")
         print(f"Question: {s['question']}")
@@ -506,6 +529,7 @@ if __name__ == "__main__":
     wandb_name = os.environ.get("WANDB_RUN_NAME")
     wandb_dir = os.environ.get("WANDB_DIR")
     wandb_mode = os.environ.get("WANDB_MODE")  # optional: 'offline' or 'online'
+    wandb_entity = os.environ.get("WANDB_ENTITY")  # optional: team name
 
     init_kwargs = {}
     if wandb_project:
@@ -516,6 +540,8 @@ if __name__ == "__main__":
         init_kwargs["dir"] = wandb_dir
     if wandb_mode:
         init_kwargs["mode"] = wandb_mode
+    if wandb_entity:
+        init_kwargs["entity"] = wandb_entity
 
     if init_kwargs:
         wandb.init(reinit=True, **init_kwargs)

@@ -134,6 +134,8 @@ def ensure_servers(args):
         "--gpu-memory-utilization", "0.95",
         "--port", "8000",
         "--allowed-local-media-path", os.getcwd(),
+        "--enable-auto-tool-choice",
+        "--tool-call-parser", "hermes"
     ]
     processes.append(start_server("Vision-Language Model Server", vlm_cmd, 8000))
 
@@ -174,7 +176,7 @@ def run_single_experiment(mode, args, out_name, wandb_instance=None):
     print(" ".join(cmd))
     # Set WandB environment variables so main_tool_model can call wandb.init() with sensible defaults
     env = os.environ.copy()
-    # Use dataset as project and out_name as run name. WANDB_API_KEY should be set externally.
+    env["WANDB_ENTITY"] = "sllm_project"  # Team name
     env["WANDB_PROJECT"] = "sllm_multimodal_agent"
     env["WANDB_RUN_NAME"] = out_name
     # Store local wandb files inside the experiment folder
@@ -223,7 +225,7 @@ def main():
     procs = ensure_servers(args)
 
     # base prefix (without mode) so each mode run gets its own folder suffix
-    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_model{args.model.replace('/', '_')}_maxtokens{args.max_tokens}"
+    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_model{args.model.replace('/', '_')}_maxtokens{args.max_tokens}_tools{args.tools}"
     os.makedirs(out_name, exist_ok=True)
 
     # Start metrics logger (poll controller /metrics) to track vllm server stats
@@ -278,7 +280,12 @@ def main():
             "tools": args.tools,
             "mode": args.mode,
         }
-        wandb.init(config=wandb_config)
+        wandb.init(
+            entity="sllm_project",
+            project="sllm_multimodal_agent",
+            name=out_name,
+            config=wandb_config
+        )
         
         run_single_experiment(args.mode, args, out_name, wandb_instance=wandb)
         print("\n=== Generating Ablation Plots ===")
