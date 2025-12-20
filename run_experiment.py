@@ -11,7 +11,6 @@ import socket
 import time
 import threading
 from urllib import request as urlrequest
-import wandb
 import signal
 
 def plot_ablation_results(exp_dir):
@@ -141,7 +140,7 @@ def ensure_servers(args):
 
     return processes
 
-def run_single_experiment(mode, args, out_name, wandb_instance=None):
+def run_single_experiment(mode, args, out_name):
     print(f"\n=== Running Experiment Mode: {mode} ===")
 
     cmd = [
@@ -225,7 +224,8 @@ def main():
     procs = ensure_servers(args)
 
     # base prefix (without mode) so each mode run gets its own folder suffix
-    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_model{args.model.replace('/', '_')}_maxtokens{args.max_tokens}_tools{args.tools}"
+    tools_str = "_".join(args.tools) if args.tools else "none"
+    out_name = f"exp_{args.dataset}_{args.mode}_shots{args.shots}_samples{args.num_samples}_model{args.model.replace('/', '_')}_maxtokens{args.max_tokens}_tools{tools_str}"
     os.makedirs(out_name, exist_ok=True)
 
     # Start metrics logger (poll controller /metrics) to track vllm server stats
@@ -270,24 +270,8 @@ def main():
 
     try:
         # run the requested mode; create per-mode out_name and pass to main
-
-        # Init wandb config for this experiment
-        wandb_config = {
-            "dataset": args.dataset,
-            "model": args.model,
-            "shots": args.shots,
-            "max_tokens": args.max_tokens,
-            "tools": args.tools,
-            "mode": args.mode,
-        }
-        wandb.init(
-            entity="sllm_project",
-            project="sllm_multimodal_agent",
-            name=out_name,
-            config=wandb_config
-        )
         
-        run_single_experiment(args.mode, args, out_name, wandb_instance=wandb)
+        run_single_experiment(args.mode, args, out_name)
         print("\n=== Generating Ablation Plots ===")
         plot_ablation_results(out_name)
 
@@ -307,9 +291,6 @@ def main():
         if metrics_logfile:
             with open(metrics_logfile, 'a', encoding='utf-8') as fh:
                 fh.write(f"Log ended at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-        # stop wandb
-        wandb.finish()
 
 if __name__ == "__main__":
     main()

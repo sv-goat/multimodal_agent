@@ -28,6 +28,8 @@ def get_function_by_name(name):
         return extract_text_from_image
     if name == "calculator":
         return calculator
+    if name == "web_search":
+        return web_search
     raise ValueError(f"Unknown tool function requested: {name}")
 
 def get_image_description(image_path: str, prompt: str = "Describe the image in detail."):
@@ -64,6 +66,44 @@ def calculator(expression: str) -> str:
     # Evaluate in a restricted namespace
     result = eval(expression, {"__builtins__": {}}, {})
     return str(result)
+def web_search(query: str, num_results: int = 3) -> str:
+    """Search the web using DuckDuckGo and return top results.
+    
+    Args:
+        query: The search query.
+        num_results: Number of results to return (default 3).
+    
+    Returns:
+        A formatted string of search results.
+    """
+    import urllib.parse
+    import urllib.request
+    import json as _json
+    
+    # Use DuckDuckGo Instant Answer API (free, no key needed)
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1"
+    
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "DocVQA-Agent/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            
+            results = []
+            # Check for abstract (main result)
+            if data.get("AbstractText"):
+                results.append(f"Summary: {data['AbstractText']}")
+            
+            # Check for related topics
+            for topic in data.get("RelatedTopics", [])[:num_results]:
+                if isinstance(topic, dict) and topic.get("Text"):
+                    results.append(topic["Text"])
+            
+            if results:
+                return "\n".join(results[:num_results])
+            return f"No results found for '{query}'."
+    except Exception as e:
+        return f"Web search failed: {e}"
 
 def extract_answer(text: Optional[str]) -> str:
     """Try to extract a concise final answer from a verbose model response.
@@ -152,6 +192,23 @@ def define_tools():
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web for information using DuckDuckGo. Returns a brief answer or summary.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query to look up on the web.",
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
     ]
     allowed_tools = []
     for tool in args.tools:
@@ -208,14 +265,17 @@ def run_experiment(args):
         with open("fewshot_library/cot_docvqa.json", "r") as f:
             cot_data = json.load(f)
     elif args.mode == "react":
-        args.use_fewshot = True
+        args.use_fewshot = args.shots > 0  # Only use few-shot if shots > 0
         args.use_cot = False
         args.use_react = True
-        args.use_tools = True
+        args.use_tools = len(args.tools) > 0
    
-        # react.json is a list of chat messages (OpenAI format) for one example
-        with open("fewshot_library/react.json", "r") as f:
-            react_fewshot_messages = json.load(f)
+        # react_2.json is a list of chat messages (OpenAI format) - 8 examples, 4 messages each
+        if args.use_fewshot:
+            with open("fewshot_library/react_2.json", "r") as f:
+                react_fewshot_messages = json.load(f)
+            # Each example has exactly 4 messages, so slice to get the right number of shots
+            react_fewshot_messages = react_fewshot_messages[:args.shots * 4]
 
     tools = define_tools()
     
@@ -362,6 +422,8 @@ def run_experiment(args):
         tool_latency = 0
         success_count = 0
         total_count = 0
+        count = 0
+        MAX_TOOL_RESULT_CHARS = 4000  # Limit tool results to avoid context explosion
         while args.use_tools and (stop_reason == "tool_calls" or stop_reason == "tool_call"):
             print("--- Tool Calls ---")
             tool_start_time = time.time()
@@ -369,11 +431,14 @@ def run_experiment(args):
                 for tool_call in tool_calls:
                     call_id: str = tool_call["id"]
                     if fn_call := tool_call.get("function"):
+                        total_count += 1
+                        fn_name: str = fn_call["name"]
                         try:
-                            total_count += 1
-                            fn_name: str = fn_call["name"]
                             fn_args: dict = json.loads(fn_call["arguments"])
                             fn_res: str = json.dumps(get_function_by_name(fn_name)(**fn_args))
+                            # Truncate long tool results to prevent context overflow
+                            if len(fn_res) > MAX_TOOL_RESULT_CHARS:
+                                fn_res = fn_res[:MAX_TOOL_RESULT_CHARS] + "... [truncated]"
                             messages.append({
                                 "role": "tool",
                                 "content": fn_res,
@@ -382,6 +447,12 @@ def run_experiment(args):
                             success_count += 1
                         except Exception as e:
                             print(f"Tool call failed: {e}")
+                            # Must still append a tool response or the API will error
+                            messages.append({
+                                "role": "tool",
+                                "content": f"Error: {str(e)[:500]}",
+                                "tool_call_id": call_id,
+                            })
             tool_end_time = time.time()
             tool_latency += tool_end_time - tool_start_time
 
@@ -401,9 +472,15 @@ def run_experiment(args):
             messages.append(response.choices[0].message.model_dump())
             stop_reason = response.choices[0].finish_reason
 
+            count += 1
+
             if hasattr(response, 'usage'):
                 prompt_tokens += response.usage.prompt_tokens
                 completion_tokens += response.usage.completion_tokens
+
+            if count >= 10:
+                print("Maximum tool call iterations reached, stopping further calls.")
+                break
 
         sample_end_time = time.time()
         sample_latencies.append(sample_end_time - sample_start_time)
