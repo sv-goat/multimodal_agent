@@ -1,7 +1,6 @@
 # Scaling LLMs Project: Multimodal Reasoning with Agentic Small LLMs
 
 ## Team Information
-- **Team Name**: No surprises
 - **Members**:
   - Xinchen Zhang ( xz3052 )
   - Siddarth Ijju ( si2462 )
@@ -69,10 +68,10 @@ View training and evaluation metrics here: https://wandb.ai/sllm_project/sllm_mu
 
 ---
 
-### C. Running Experiments (Inference Only)
+### C. Running Experiments
 To run the experiments, run:
 ```bash
-python master_runner.py --modes react --models Qwen/Qwen3-VL-4B-Instruct --num_shots 0 4 8
+python experiment/master_runner.py --modes react --models Qwen/Qwen3-VL-4B-Instruct --num_shots 0 4 8
 ```
 
 ### D. Quickstart: Minimum Reproducible Result
@@ -82,30 +81,34 @@ To reproduce our results, run:
 pip install -r requirements.txt
 
 # Step 2: Download dataset into the images folder
-python save_docvqa_images.py --output_dir images --split validation --num_images 100
+python setup/save_docvqa_images.py --output_dir images --split validation --num_images 100
 
 # Step 3: Generate few-shot examples
-python generate_traces.py --trace_type react --num_samples 10 --output fewshot_library/react.json
+python setup/generate_traces.py --trace_type react --num_samples 10 --output fewshot_library/react.json
 
 # Step 4: Run experiments
-python master_runner.py
+python experiment/master_runner.py
 
-# Step 5: Visualize results
-python generate_csv_tables.py
+# Step 5: Extract results to a CSV format for further analysis
+python eval/generate_csv_tables.py
 ```
 
 ---
 
 ## 5. Project Structure
 ```
-├── main_tool_model.py       # Main experiment runner
-├── run_experiment.py        # Single experiment orchestrator (starts vLLM server)
-├── master_runner.py         # Batch experiment runner (parameter sweeps)
-├── generate_traces.py       # Generate few-shot traces (ReAct or CoT)
-├── save_docvqa_images.py    # Download DocVQA images from HuggingFace
-├── generate_csv_tables.py   # Extract and visualize metrics
-├── docvqa_eval.py           # ANLS evaluation metrics
-├── vlm_as_a_tool.py         # VLM tool wrapper
+├── experiment/
+│   ├── main_tool_model.py   # Main experiment runner
+│   ├── run_experiment.py    # Single experiment orchestrator (starts vLLM server)
+│   └── master_runner.py     # Batch experiment runner (parameter sweeps)
+├── setup/
+│   ├── generate_traces.py   # Generate few-shot traces (ReAct or CoT)
+│   └── save_docvqa_images.py # Download DocVQA images from HuggingFace
+├── eval/
+│   ├── docvqa_eval.py       # ANLS evaluation metrics
+│   └── generate_csv_tables.py # Extract and visualize metrics
+├── scripts/
+│   └── run_exps.sh          # SLURM batch job script
 ├── images/                  # DocVQA images (sample_0.png, sample_1.png, ...)
 ├── fewshot_library/         # Few-shot prompts (react_2.json, cot_docvqa.json)
 └── requirements.txt         # Python dependencies

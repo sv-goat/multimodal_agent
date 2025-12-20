@@ -8,7 +8,7 @@ This module handles:
 - Generating ablation result plots
 
 Usage:
-    python run_experiment.py --mode react --model Qwen/Qwen3-VL-4B-Instruct --shots 4
+    python experiment/run_experiment.py --mode react --model Qwen/Qwen3-VL-4B-Instruct --shots 4
 """
 
 import subprocess
@@ -25,6 +25,11 @@ import time
 import threading
 from urllib import request as urlrequest
 import signal
+
+# Get absolute path to this script's directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Get project root (parent of experiment/)
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 
 def plot_ablation_results(exp_dir):
@@ -158,9 +163,10 @@ def ensure_servers(args):
 def run_single_experiment(mode, args, out_name):
     print(f"\n=== Running Experiment Mode: {mode} ===")
 
+    main_script = os.path.join(SCRIPT_DIR, "main_tool_model.py")
     cmd = [
         "python",
-        "main_tool_model.py",
+        main_script,
         "--dataset", args.dataset,
         "--split", args.split,
         "--model", args.model,

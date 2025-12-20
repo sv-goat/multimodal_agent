@@ -15,7 +15,7 @@ BASE_DIR="/insomnia001/depts/edu/COMS-E6998-015/sv2795"
 SIF_IMAGE="/insomnia001/home/sv2795/tyrani.sif"
 
 # Your python master script (the one that loops over parameters)
-PYTHON_SCRIPT="master_runner.py"
+PYTHON_SCRIPT="experiment/master_runner.py"
 
 # --- 2. Directory Setup ---
 # Create directories on the host so the container can map them

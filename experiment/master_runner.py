@@ -5,28 +5,33 @@ This module generates and executes all experiment combinations for ablation stud
 iterating over different models, prompting modes, shot counts, and tool combinations.
 
 Usage:
-    python master_runner.py  # Run with defaults
-    python master_runner.py --models Qwen/Qwen3-VL-4B-Instruct --num_shots 0 4 8
+    python experiment/master_runner.py  # Run with defaults
+    python experiment/master_runner.py --models Qwen/Qwen3-VL-4B-Instruct --num_shots 0 4 8
 """
 
 import argparse
 import itertools
+import os
 import subprocess
+
+# Get absolute path to this script's directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def main(sequence_lengths, modes, models, all_tool_combinations, num_shots):
-    """Generate and run all experiment combinations."""
+
     commands = []
+    run_exp_script = os.path.join(SCRIPT_DIR, "run_experiment.py")
     for sequence_length, mode, model in itertools.product(sequence_lengths, modes, models):
         
         for num_shot in num_shots:
             if mode != 'react':
-                command = f"CACHE_DIR=/tmp/vllm_cache_$$; export TORCHINDUCTOR_CACHE_DIR=$CACHE_DIR; python run_experiment.py --max_tokens {sequence_length} --mode {mode} --model {model} --shots {num_shot}; rm -rf $CACHE_DIR"
+                command = f"CACHE_DIR=/tmp/vllm_cache_$$; export TORCHINDUCTOR_CACHE_DIR=$CACHE_DIR; python {run_exp_script} --max_tokens {sequence_length} --mode {mode} --model {model} --shots {num_shot}; rm -rf $CACHE_DIR"
                 commands.append(command)
             else:
                 for tool_combo in all_tool_combinations:
                     tools_arg = f"--tools {','.join(tool_combo)}" if tool_combo else ""
-                    command = f"CACHE_DIR=/tmp/vllm_cache_$$; export TORCHINDUCTOR_CACHE_DIR=$CACHE_DIR; python run_experiment.py --max_tokens {sequence_length} --mode {mode} --model {model} --shots {num_shot} {tools_arg}; rm -rf $CACHE_DIR"
+                    command = f"CACHE_DIR=/tmp/vllm_cache_$$; export TORCHINDUCTOR_CACHE_DIR=$CACHE_DIR; python {run_exp_script} --max_tokens {sequence_length} --mode {mode} --model {model} --shots {num_shot} {tools_arg}; rm -rf $CACHE_DIR"
                     commands.append(command)
         
 

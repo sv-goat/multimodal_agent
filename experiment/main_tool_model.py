@@ -14,16 +14,24 @@ Usage:
 import json
 import os
 import re
+import sys
 import time
 import argparse
 from typing import Any, Optional
 from openai import OpenAI
 from datasets import load_dataset
-from vlm_as_a_tool import call_vl_model
 from tqdm import tqdm
 import wandb
-from docvqa_eval import compute_anls
 from pathlib import Path
+
+# Get absolute path to this script's directory and project root
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Add parent directory to path for imports
+sys.path.insert(0, PROJECT_ROOT)
+from eval.docvqa_eval import compute_anls
+
 try:
     from PIL import Image  # type: ignore
     import pytesseract  # type: ignore
@@ -35,8 +43,6 @@ except Exception:
 
 
 def get_function_by_name(name):
-    if name == "get_image_description":
-        return get_image_description
     if name == "extract_text_from_image":
         return extract_text_from_image
     if name == "calculator":
@@ -45,28 +51,23 @@ def get_function_by_name(name):
         return web_search
     raise ValueError(f"Unknown tool function requested: {name}")
 
-def get_image_description(image_path: str, prompt: str = "Describe the image in detail."):
-    """Get a description of an image.
+def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
+    """OCR: Extract raw text from an image using Tesseract.
 
     Args:
         image_path: The path to the image file.
-        prompt: The prompt to describe the image. Defaults to "Describe the image in detail."
+        lang: Tesseract language code (default: 'eng').
 
     Returns:
-        The description of the image as a string.
-    """
-    return call_vl_model(prompt, image_path)
+        Extracted text from the image.
 
-def extract_text_from_image(image_path: str, lang: str = "eng") -> str:
-    """OCR: Extract raw text from an image using Tesseract if available.
-
-    Falls back to the VLM description pathway if pytesseract/PIL are unavailable.
+    Raises:
+        RuntimeError: If Tesseract OCR is not available.
     """
-    if _OCR_AVAILABLE:
-        image = Image.open(image_path)
-        return pytesseract.image_to_string(image, lang=lang).strip()
-    # Fallback: ask the VLM to extract text as best as possible
-    return call_vl_model("Extract all visible text verbatim from the image.", image_path)
+    if not _OCR_AVAILABLE:
+        raise RuntimeError("Tesseract OCR is not available. Please install pytesseract and PIL.")
+    image = Image.open(image_path)
+    return pytesseract.image_to_string(image, lang=lang).strip()
 
 def calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression safely and return the result as string.
@@ -145,27 +146,6 @@ def extract_answer(text: Optional[str]) -> str:
 
 def define_tools():
     avail_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_image_description",
-                "description": "Describe image content or answer a question about it using a VLM.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "image_path": {
-                            "type": "string",
-                            "description": "Absolute path to an image file accessible to the server.",
-                        },
-                        "prompt": {
-                            "type": "string",
-                            "default": "Describe the image in detail.",
-                        },
-                    },
-                    "required": ["image_path", "prompt"],
-                },
-            },
-        },
         {
             "type": "function",
             "function": {
@@ -275,7 +255,8 @@ def run_experiment(args):
         args.use_react = False
         args.use_tools = False
 
-        with open("fewshot_library/cot_docvqa.json", "r") as f:
+        cot_path = os.path.join(PROJECT_ROOT, "fewshot_library/cot_docvqa.json")
+        with open(cot_path, "r") as f:
             cot_data = json.load(f)
     elif args.mode == "react":
         args.use_fewshot = args.shots > 0  # Only use few-shot if shots > 0
@@ -285,14 +266,16 @@ def run_experiment(args):
    
         # react_2.json is a list of chat messages (OpenAI format) - 8 examples, 4 messages each
         if args.use_fewshot:
-            with open("fewshot_library/react_2.json", "r") as f:
+            react_path = os.path.join(PROJECT_ROOT, "fewshot_library/react_2.json")
+            with open(react_path, "r") as f:
                 react_fewshot_messages = json.load(f)
             # Each example has exactly 4 messages, so slice to get the right number of shots
             react_fewshot_messages = react_fewshot_messages[:args.shots * 4]
 
     tools = define_tools()
     
-    base_path = os.getcwd()
+    # Use PROJECT_ROOT for paths to images/ and other resources
+    base_path = PROJECT_ROOT
     get_fields = get_fields_function(args.dataset, base_path)
 
     openai_api_key = "EMPTY"
