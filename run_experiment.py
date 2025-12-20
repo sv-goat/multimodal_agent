@@ -1,3 +1,16 @@
+"""
+Single experiment orchestrator that manages vLLM server lifecycle and runs experiments.
+
+This module handles:
+- Starting and stopping vLLM servers with proper configuration
+- Running individual experiments via main_tool_model.py
+- Collecting and logging vLLM metrics during experiments
+- Generating ablation result plots
+
+Usage:
+    python run_experiment.py --mode react --model Qwen/Qwen3-VL-4B-Instruct --shots 4
+"""
+
 import subprocess
 import argparse
 import time
@@ -13,7 +26,9 @@ import threading
 from urllib import request as urlrequest
 import signal
 
+
 def plot_ablation_results(exp_dir):
+    """Generate accuracy, tool usage, and latency plots from experiment results."""
     results = {}
 
     # Load predictions and ground truth

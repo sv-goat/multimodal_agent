@@ -4,4 +4,9 @@ datasets
 matplotlib
 seaborn
 pytesseract
+Pillow
 IPython
+tqdm
+wandb
+numpy
+psutil

@@ -1,4 +1,12 @@
+"""
+VLM (Vision-Language Model) wrapper for tool-based image understanding.
+
+This module provides a simple interface to call a vLLM-served VLM for
+image description and visual question answering tasks.
+"""
+
 from openai import OpenAI
+
 
 def call_vl_model(prompt: str, image_path: str):
     """

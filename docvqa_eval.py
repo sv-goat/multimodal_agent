@@ -1,3 +1,11 @@
+"""
+DocVQA evaluation metrics using ANLS (Average Normalized Levenshtein Similarity).
+
+This module implements the official DocVQA evaluation metric which measures
+the similarity between predicted and ground truth answers using normalized
+Levenshtein distance with a threshold.
+"""
+
 import json
 import re
 from typing import Dict, Union

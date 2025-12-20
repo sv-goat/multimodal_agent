@@ -1,3 +1,16 @@
+"""
+Main experiment runner for multimodal document QA with tool-augmented reasoning.
+
+This module implements the core experiment loop for evaluating vision-language models
+on document understanding tasks (DocVQA) using different prompting strategies:
+- Direct: Simple question answering
+- Chain-of-Thought (CoT): Step-by-step reasoning
+- ReAct: Reasoning with tool calls (OCR, calculator, web search)
+
+Usage:
+    python main_tool_model.py --mode react --model Qwen/Qwen3-VL-4B-Instruct --shots 4
+"""
+
 import json
 import os
 import re
