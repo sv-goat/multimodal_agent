@@ -33,23 +33,15 @@ The models were run on A6000 GPUs with 48GB RAM, using vLLM as their backend.
 
 ### Latency and Accuracy Tradeoff
 
-| Method            | Avg Tokens | Mean Latency (s) | Accuracy (%) |
-|-------------------|------------|------------------|--------------|
-| Direct            | 627        | 0.22             | 8.7          |
-| CoT               | 1824       | 0.24             | 11.3         |
-| ReAct (OCR)       | 4739       | 5.44             | **41.0**     |
-| ReAct (OCR+Calc)  | 4800       | 5.19             | 40.0         |
-| ReAct (OCR+Calc+Web) | 5295    | 5.18             | 34.7         |
+![Throughput vs Mode](images/throughtput_v_mode.png)
 
 ### Key Observations
 
 1. **ReAct significantly outperforms Direct and CoT**: Across all model sizes, ReAct with OCR achieves higher accuracy than direct prompting, demonstrating that tool-augmented reasoning is crucial for document understanding tasks.
 
-2. **OCR is the most impactful tool**: The extract_text_from_image (OCR) tool provides the largest accuracy boost. Adding calculator and web search tools provides marginal or negative gains, suggesting that accurate text extraction is the primary bottleneck.
+2. **Smaller models benefit more from agentic reasoning**: The 2B model shows a 200% relative improvement with ReAct, compared to 105% for the 8B model, indicating that tool augmentation can help close the gap between small and large models.
 
-3. **Smaller models benefit more from agentic reasoning**: The 2B model shows a 200% relative improvement with ReAct, compared to 105% for the 8B model, indicating that tool augmentation can help close the gap between small and large models.
-
-4. **Latency tradeoff is significant**: ReAct methods are slower than direct prompting due to multiple tool calls and reasoning steps, but the accuracy gains justify this tradeoff for document QA tasks.
+3. **Latency tradeoff is significant**: ReAct methods are slower than direct prompting due to multiple tool calls and reasoning steps, but the accuracy gains justify this tradeoff for document QA tasks.
 
 ---
 
@@ -84,7 +76,7 @@ pip install -r requirements.txt
 python setup/save_docvqa_images.py --output_dir images --split validation --num_images 100
 
 # Step 3: Generate few-shot examples
-python setup/generate_traces.py --trace_type react --num_samples 10 --output fewshot_library/react.json
+python setup/generate_traces.py --trace_type react --num_samples 10 --output fewshot_library/react_2.json
 
 # Step 4: Run experiments
 python experiment/master_runner.py
@@ -109,7 +101,7 @@ python eval/generate_csv_tables.py
 │   └── generate_csv_tables.py # Extract and visualize metrics
 ├── scripts/
 │   └── run_exps.sh          # SLURM batch job script
-├── images/                  # DocVQA images (sample_0.png, sample_1.png, ...)
+├── images/                  # Image used for readme
 ├── fewshot_library/         # Few-shot prompts (react_2.json, cot_docvqa.json)
 └── requirements.txt         # Python dependencies
 ```
