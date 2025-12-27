@@ -58,6 +58,8 @@ pip install -r requirements.txt
 ### B. Wandb Dashboard
 View training and evaluation metrics here: https://wandb.ai/sllm_project/sllm_multimodal_agent/workspace?nw=nwusersv2795
 
+View a simple high level report here: https://api.wandb.ai/links/sllm_project/gse6lfe3
+
 ---
 
 ### C. Running Experiments
